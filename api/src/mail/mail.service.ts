@@ -10,6 +10,43 @@ import { isBrevoConfigured, isMailConfigured } from './mail.config'
 export class MailService {
   constructor(private readonly mailerService: MailerService) {}
 
+  private toSafeMailError(provider: string, error: any) {
+    const status = error?.response?.status
+    const code = error?.response?.data?.code
+    const providerMessage = error?.response?.data?.message
+    const message = providerMessage || error?.message || 'Unknown error'
+
+    if (
+      provider === 'Brevo' &&
+      status === 403 &&
+      code === 'permission_denied' &&
+      /SMTP account is not yet activated/i.test(message)
+    ) {
+      return new Error(
+        'Brevo transactional email is not active. Activate SMTP/Transactional Email in Brevo or contact Brevo support to request activation.',
+      )
+    }
+
+    return new Error(
+      `${provider} mail delivery failed${status ? ` (${status}` : ''}${
+        code ? ` ${code}` : ''
+      }${status ? ')' : ''}: ${message}`,
+    )
+  }
+
+  private logSafeMailFailure(provider: string, error: any) {
+    const status = error?.response?.status
+    const code = error?.response?.data?.code
+    const message =
+      error?.response?.data?.message || error?.message || 'Unknown error'
+
+    console.error(`${provider} mail delivery failed`, {
+      status,
+      code,
+      message,
+    })
+  }
+
   private assertMailConfigured() {
     if (!isMailConfigured) {
       throw new Error(
@@ -121,8 +158,8 @@ export class MailService {
         await this.sendWithBrevo({ to, subject, html, from })
         return
       } catch (e) {
-        console.error('Brevo mail delivery failed:', e?.message ?? e)
-        throw e
+        this.logSafeMailFailure('Brevo', e)
+        throw this.toSafeMailError('Brevo', e)
       }
     }
 
@@ -142,8 +179,8 @@ export class MailService {
     try {
       await this.mailerService.sendMail(sendMailOptions)
     } catch (e) {
-      console.error('Mail delivery failed:', e?.message ?? e)
-      throw e
+      this.logSafeMailFailure('SMTP', e)
+      throw this.toSafeMailError('SMTP', e)
     }
   }
 
@@ -157,8 +194,8 @@ export class MailService {
         await this.sendWithBrevo({ to, cc, subject, html, from })
         return
       } catch (e) {
-        console.error('Brevo mail delivery failed:', e?.message ?? e)
-        throw e
+        this.logSafeMailFailure('Brevo', e)
+        throw this.toSafeMailError('Brevo', e)
       }
     }
 
@@ -181,8 +218,8 @@ export class MailService {
     try {
       await this.mailerService.sendMail(sendMailOptions)
     } catch (e) {
-      console.error('Mail delivery failed:', e?.message ?? e)
-      throw e
+      this.logSafeMailFailure('SMTP', e)
+      throw this.toSafeMailError('SMTP', e)
     }
   }
 }

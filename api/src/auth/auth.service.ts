@@ -132,8 +132,10 @@ export class AuthService {
     await user.save()
 
     this.sendEmailVerificationEmail(user).catch((e) => {
-      console.log('Failed to send email verification email')
-      console.log(e)
+      console.error(
+        'Failed to send email verification email:',
+        e?.message ?? 'Unknown error',
+      )
     })
 
     const payload = { email: user.email, sub: user._id }
