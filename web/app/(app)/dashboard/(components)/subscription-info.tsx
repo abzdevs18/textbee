@@ -78,6 +78,12 @@ export default function SubscriptionInfo() {
     return interval.toLowerCase() === 'month' ? 'monthly' : 'yearly'
   }
 
+  const hasUnlimitedUsage =
+    currentSubscription?.usage?.dailyLimit === -1 &&
+    currentSubscription?.usage?.monthlyLimit === -1 &&
+    currentSubscription?.usage?.bulkSendLimit === -1 &&
+    currentSubscription?.usage?.deviceLimit === -1
+
   if (isLoadingSubscription)
     return (
       <div className='flex justify-center items-center h-full min-h-[200px]'>
@@ -274,7 +280,7 @@ export default function SubscriptionInfo() {
       </div>
 
       <div className='flex justify-end gap-2 flex-wrap'>
-        {(!currentSubscription?.plan?.name ||
+        {hasUnlimitedUsage ? null : (!currentSubscription?.plan?.name ||
           currentSubscription?.plan?.name?.toLowerCase() === 'free') ? (
           <Link
             href='/checkout/pro'

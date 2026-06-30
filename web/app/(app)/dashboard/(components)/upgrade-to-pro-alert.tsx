@@ -36,6 +36,11 @@ export default function UpgradeToProAlert() {
   const monthlyUsagePercentage = currentSubscription?.usage?.monthlyUsagePercentage || 0
   const monthlyLimit = currentSubscription?.usage?.monthlyLimit || 0
   const processedSmsLastMonth = currentSubscription?.usage?.processedSmsLastMonth || 0
+  const hasUnlimitedUsage =
+    currentSubscription?.usage?.dailyLimit === -1 &&
+    currentSubscription?.usage?.monthlyLimit === -1 &&
+    currentSubscription?.usage?.bulkSendLimit === -1 &&
+    currentSubscription?.usage?.deviceLimit === -1
 
   const alertConfig = useMemo(() => {
     if (monthlyUsagePercentage >= 100 ) {
@@ -112,7 +117,12 @@ export default function UpgradeToProAlert() {
 
   const planName = currentSubscription?.plan?.name
 
-  if (isLoadingSubscription || !currentSubscription || subscriptionError) {
+  if (
+    isLoadingSubscription ||
+    !currentSubscription ||
+    subscriptionError ||
+    hasUnlimitedUsage
+  ) {
     return null
   }
 

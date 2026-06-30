@@ -53,10 +53,52 @@ export class BillingService {
     })
   }
 
+  private isSelfHostedUnlimitedEnabled() {
+    const raw = process.env.SELF_HOSTED_UNLIMITED?.trim().toLowerCase()
+
+    if (raw) {
+      return !['0', 'false', 'no', 'off'].includes(raw)
+    }
+
+    return !process.env.POLAR_ACCESS_TOKEN?.trim()
+  }
+
+  private getUnlimitedLimits() {
+    return {
+      dailyLimit: -1,
+      monthlyLimit: -1,
+      bulkSendLimit: -1,
+      deviceLimit: -1,
+    }
+  }
+
+  private withSelfHostedPlanLimits(plan: any) {
+    if (!plan || !this.isSelfHostedUnlimitedEnabled()) {
+      return plan
+    }
+
+    const plainPlan =
+      typeof plan.toObject === 'function' ? plan.toObject() : plan
+
+    return {
+      ...plainPlan,
+      ...this.getUnlimitedLimits(),
+      monthlyPrice: 0,
+      yearlyPrice: 0,
+    }
+  }
+
   async getPlans(): Promise<PlanDTO[]> {
-    return this.planModel.find({
+    const plans = await this.planModel.find({
       isActive: true,
     })
+
+    if (!this.isSelfHostedUnlimitedEnabled()) {
+      return plans
+    }
+
+    const freePlan = plans.find((plan) => plan.name === 'free') ?? plans[0]
+    return freePlan ? [this.withSelfHostedPlanLimits(freePlan)] : []
   }
 
   async getCurrentSubscription(user: any) {
@@ -130,6 +172,7 @@ export class BillingService {
       } catch {}
       return {
         ...subscription.toObject(),
+        plan: this.withSelfHostedPlanLimits(plan),
         usage: {
           processedSmsToday,
           processedSmsLastMonth,
@@ -207,7 +250,7 @@ export class BillingService {
     } catch {}
 
     return {
-      plan,
+      plan: this.withSelfHostedPlanLimits(plan),
       isActive: true,
       usage: {
         processedSmsToday,
@@ -687,7 +730,7 @@ export class BillingService {
     // return newFreePlanSubscription.populate('plan')
     return {
       user,
-      plan: freePlan,
+      plan: this.withSelfHostedPlanLimits(freePlan),
       isActive: true,
       status: 'active',
       amount: 0,
@@ -695,6 +738,10 @@ export class BillingService {
   }
 
   private getEffectiveLimits(subscription: any, plan: any) {
+    if (this.isSelfHostedUnlimitedEnabled()) {
+      return this.getUnlimitedLimits()
+    }
+
     if (!subscription) {
       return {
         dailyLimit: plan.dailyLimit,

@@ -478,25 +478,35 @@ export default function GetStartedCard() {
                           {step.id === 'choose_plan' && (
                             <>
                               {subLoading ? (
-                                <div className='grid w-full gap-3 md:grid-cols-2'>
-                                  <Skeleton className='h-40 rounded-lg' />
+                                <div className='grid w-full gap-3'>
                                   <Skeleton className='h-40 rounded-lg' />
                                 </div>
                               ) : (
-                                <div className='grid w-full gap-3 md:grid-cols-2'>
-                                  <Card className='border-border shadow-none'>
+                                <div className='grid w-full gap-3'>
+                                  <Card className='relative border-2 border-primary shadow-md'>
+                                    <Badge className='absolute right-3 top-3 text-[10px]'>
+                                      Self-hosted
+                                    </Badge>
                                     <CardHeader className='pb-2 pt-4'>
-                                      <CardTitle className='text-base'>Free</CardTitle>
-                                      <CardDescription>$0/month</CardDescription>
+                                      <CardTitle className='text-base'>
+                                        Self-hosted Free
+                                      </CardTitle>
+                                      <CardDescription>
+                                        $0/month on your own server
+                                      </CardDescription>
                                     </CardHeader>
-                                    <CardContent className='space-y-2 pb-4 text-sm text-muted-foreground'>
+                                    <CardContent className='space-y-2 pb-4 text-sm'>
                                       <p className='flex gap-2'>
-                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-muted-foreground' />
-                                        1 device
+                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
+                                        Unlimited devices
                                       </p>
                                       <p className='flex gap-2'>
-                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-muted-foreground' />
-                                        50 SMS / day, 300 / month
+                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
+                                        No daily or monthly SMS limit
+                                      </p>
+                                      <p className='flex gap-2'>
+                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
+                                        No bulk-send limit
                                       </p>
                                     </CardContent>
                                     <CardFooter className='flex-col gap-2 pb-4 pt-0'>
@@ -508,54 +518,7 @@ export default function GetStartedCard() {
                                           updateOnboarding({ skipStepId: 'choose_plan' })
                                         }
                                       >
-                                        Continue with Free
-                                      </Button>
-                                    </CardFooter>
-                                  </Card>
-                                  <Card className='relative border-2 border-primary shadow-md'>
-                                    <Badge className='absolute right-3 top-3 text-[10px]'>
-                                      Recommended
-                                    </Badge>
-                                    <CardHeader className='pb-2 pt-4 pr-14'>
-                                      <CardTitle className='text-base'>Pro</CardTitle>
-                                      <CardDescription>$10/month</CardDescription>
-                                    </CardHeader>
-                                    <CardContent className='space-y-2 pb-4 text-sm'>
-                                      <p className='flex gap-2 text-foreground'>
-                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
-                                        Up to 5 devices
-                                      </p>
-                                      <p className='flex gap-2 text-foreground'>
-                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
-                                        No daily limit
-                                      </p>
-                                      <p className='flex gap-2 text-foreground'>
-                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
-                                        5,000 SMS / month
-                                      </p>
-                                      <p className='flex gap-2 text-foreground'>
-                                        <Check className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
-                                        Priority support
-                                      </p>
-                                    </CardContent>
-                                    <CardFooter className='flex-col gap-2 pb-4 pt-0'>
-                                      <Button className='w-full' size='sm' asChild>
-                                        <Link href='/checkout/pro'>Upgrade to Pro</Link>
-                                      </Button>
-                                      <Button
-                                        variant='link'
-                                        size='sm'
-                                        className='h-auto text-xs text-muted-foreground'
-                                        asChild
-                                      >
-                                        <a
-                                          href='/checkout/pro'
-                                          target='_blank'
-                                          rel='noreferrer'
-                                        >
-                                          Compare all plans
-                                          <ExternalLink className='ml-1 h-3 w-3' />
-                                        </a>
+                                        Continue with Self-hosted Free
                                       </Button>
                                     </CardFooter>
                                   </Card>
