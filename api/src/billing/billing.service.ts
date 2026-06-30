@@ -72,9 +72,23 @@ export class BillingService {
     }
   }
 
+  private getSelfHostedFreePlan() {
+    return {
+      name: 'free',
+      ...this.getUnlimitedLimits(),
+      monthlyPrice: 0,
+      yearlyPrice: 0,
+      isActive: true,
+    }
+  }
+
   private withSelfHostedPlanLimits(plan: any) {
-    if (!plan || !this.isSelfHostedUnlimitedEnabled()) {
+    if (!this.isSelfHostedUnlimitedEnabled()) {
       return plan
+    }
+
+    if (!plan) {
+      return this.getSelfHostedFreePlan()
     }
 
     const plainPlan =
@@ -98,7 +112,7 @@ export class BillingService {
     }
 
     const freePlan = plans.find((plan) => plan.name === 'free') ?? plans[0]
-    return freePlan ? [this.withSelfHostedPlanLimits(freePlan)] : []
+    return [this.withSelfHostedPlanLimits(freePlan)]
   }
 
   async getCurrentSubscription(user: any) {
@@ -677,11 +691,14 @@ export class BillingService {
     const proPlan = plans.find((plan) => plan.name === 'pro')
     const freePlan = plans.find((plan) => plan.name === 'free')
 
-    const customPlanSubscription = await this.subscriptionModel.findOne({
-      user: user._id,
-      plan: { $in: customPlans.map((plan) => plan._id) },
-      isActive: true,
-    })
+    const customPlanSubscription =
+      customPlans.length > 0
+        ? await this.subscriptionModel.findOne({
+            user: user._id,
+            plan: { $in: customPlans.map((plan) => plan._id) },
+            isActive: true,
+          })
+        : null
 
     if (customPlanSubscription) {
       return customPlanSubscription.populate('plan')
@@ -699,21 +716,25 @@ export class BillingService {
       }
     }
 
-    const proPlanSubscription = await this.subscriptionModel.findOne({
-      user: user._id,
-      plan: proPlan._id,
-      isActive: true,
-    })
+    const proPlanSubscription = proPlan
+      ? await this.subscriptionModel.findOne({
+          user: user._id,
+          plan: proPlan._id,
+          isActive: true,
+        })
+      : null
 
     if (proPlanSubscription) {
       return proPlanSubscription.populate('plan')
     }
 
-    const freePlanSubscription = await this.subscriptionModel.findOne({
-      user: user._id,
-      plan: freePlan._id,
-      isActive: true,
-    })
+    const freePlanSubscription = freePlan
+      ? await this.subscriptionModel.findOne({
+          user: user._id,
+          plan: freePlan._id,
+          isActive: true,
+        })
+      : null
 
     if (freePlanSubscription) {
       return freePlanSubscription.populate('plan')
@@ -997,7 +1018,7 @@ export class BillingService {
 
       const effectiveLimits = this.getEffectiveLimits(subscription, plan)
 
-      if (plan.name?.startsWith('custom')) {
+      if (plan?.name?.startsWith('custom')) {
         // For custom plans, check if custom limits are set to unlimited (-1)
         if (
           effectiveLimits.dailyLimit === -1 &&
@@ -1109,7 +1130,7 @@ export class BillingService {
 
         // if plan is not free and monthly limit is exceeded, give them 80% more monthly limit
         if (
-          plan.name !== 'free' &&
+          plan?.name !== 'free' &&
           monthlyExceeded &&
           !dailyExceeded &&
           !bulkExceeded
