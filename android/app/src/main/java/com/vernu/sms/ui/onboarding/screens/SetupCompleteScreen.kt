@@ -156,7 +156,7 @@ fun SetupCompleteScreen(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "SMS you receive on this phone will appear in your textbee dashboard and be accessible via API",
+                        text = "SMS you receive on this phone will appear in your Gabay SMS dashboard and be accessible via API",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -201,7 +201,7 @@ fun SetupCompleteScreen(
         OutlinedButton(
             onClick = {
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/dashboard"))
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard"))
                 )
             },
             modifier = Modifier
@@ -216,12 +216,12 @@ fun SetupCompleteScreen(
         TextButton(
             onClick = {
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev/docs"))
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/docs"))
                 )
             }
         ) {
             Text(
-                text = "New to textbee? Read the quickstart guide",
+                text = "New to Gabay SMS? Read the quickstart guide",
                 style = MaterialTheme.typography.bodySmall
             )
         }

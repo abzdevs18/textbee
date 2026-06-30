@@ -105,7 +105,7 @@ fun DashboardScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "textbee.dev",
+                                text = "sms.gabay.online",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -474,7 +474,7 @@ private fun SubscriptionCard(
                             OutlinedButton(
                                 onClick = {
                                     context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev/pricing"))
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/checkout/pro"))
                                     )
                                 }
                             ) {
@@ -484,7 +484,7 @@ private fun SubscriptionCard(
                             TextButton(
                                 onClick = {
                                     context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/dashboard/account"))
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard/account"))
                                     )
                                 }
                             ) {
@@ -550,7 +550,7 @@ private fun UsageRow(label: String, used: Int?, limit: Int?, pct: Int?) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
                 text = if (isUnlimited) "${used ?: 0} / Unlimited"
-                       else "${used ?: 0} / ${limit ?: "—"}",
+                       else "${used ?: 0} / ${limit ?: "-"}",
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium
             )
@@ -587,7 +587,7 @@ private fun QuickActionsSection() {
             OutlinedButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/dashboard"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard"))
                     )
                 },
                 modifier = Modifier.weight(1f)
@@ -599,7 +599,7 @@ private fun QuickActionsSection() {
             OutlinedButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev/docs"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/docs"))
                     )
                 },
                 modifier = Modifier.weight(1f)

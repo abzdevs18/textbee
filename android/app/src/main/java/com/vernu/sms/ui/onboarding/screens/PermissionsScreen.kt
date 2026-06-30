@@ -148,7 +148,7 @@ fun PermissionsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "These permissions are only used to send and receive SMS on your behalf. textbee never accesses your existing message history.",
+                text = "These permissions are only used to send and receive SMS on your behalf. Gabay SMS never accesses your existing message history.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -156,7 +156,7 @@ fun PermissionsScreen(
             TextButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev/privacy-policy"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/privacy-policy"))
                     )
                 },
                 contentPadding = PaddingValues(0.dp)

@@ -81,7 +81,7 @@ class StickyNotificationService : Service() {
             )
 
             Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("TextBee Active")
+                .setContentTitle("Gabay SMS Active")
                 .setContentText("SMS gateway service is active")
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
@@ -90,7 +90,7 @@ class StickyNotificationService : Service() {
         } else {
             @Suppress("DEPRECATION")
             NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("TextBee Active")
+                .setContentTitle("Gabay SMS Active")
                 .setContentText("SMS gateway service is active")
                 .setOngoing(true)
                 .setSmallIcon(R.mipmap.ic_launcher)

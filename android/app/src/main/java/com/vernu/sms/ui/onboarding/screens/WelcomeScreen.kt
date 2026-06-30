@@ -48,7 +48,7 @@ fun WelcomeScreen(
         Spacer(modifier = Modifier.height(32.dp))
 
         Text(
-            text = "textbee",
+            text = "Gabay SMS",
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary
@@ -70,7 +70,7 @@ fun WelcomeScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             listOf(
-                "Create a free account at textbee.dev",
+                "Create a free account at sms.gabay.online",
                 "Connect this phone as your SMS gateway",
                 "Send SMS via API from any app or automation"
             ).forEachIndexed { i, step ->
@@ -121,7 +121,7 @@ fun WelcomeScreen(
         TextButton(
             onClick = {
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/register"))
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/register"))
                 )
             }
         ) {
@@ -136,12 +136,12 @@ fun WelcomeScreen(
         TextButton(
             onClick = {
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev"))
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online"))
                 )
             }
         ) {
             Text(
-                text = "textbee.dev",
+                text = "sms.gabay.online",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

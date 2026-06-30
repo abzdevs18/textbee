@@ -103,7 +103,7 @@ export default function UpdateAppModal() {
             <Smartphone className='h-6 w-6' />
           </div>
           <DialogTitle className='text-center text-2xl'>
-            You are using an older version of the textbee mobile app
+            You are using an older version of the Gabay SMS mobile app
           </DialogTitle>
           <DialogDescription className='text-center text-sm sm:text-base'>
             <span className='font-medium text-foreground'>{deviceSummary}</span>{' '}

@@ -48,7 +48,7 @@ export default function ContributePage() {
   return (
     <div className='min-h-screen p-4 md:p-8 space-y-8'>
       <div className='text-center space-y-4'>
-        <h1 className='text-4xl font-bold'>Support TextBee</h1>
+        <h1 className='text-4xl font-bold'>Support Gabay SMS</h1>
         <p className='text-muted-foreground max-w-2xl mx-auto'>
           Your contribution, whether financial or through code, helps keep this
           project alive and growing.
@@ -63,7 +63,7 @@ export default function ContributePage() {
               Financial Support
             </CardTitle>
             <CardDescription>
-              Help sustain TextBee&apos;s development through financial
+              Help sustain Gabay SMS development through financial
               contributions
             </CardDescription>
           </CardHeader>
@@ -81,7 +81,7 @@ export default function ContributePage() {
                     <Button className='w-full' asChild>
                       <Link href={ExternalLinks.patreon} target='_blank'>
                         <Heart className='mr-2 h-4 w-4' />
-                        Support on Patreon
+                        Visit Gabay
                       </Link>
                     </Button>
                   </CardContent>
@@ -99,7 +99,7 @@ export default function ContributePage() {
                     <Button variant='outline' className='w-full' asChild>
                       <Link href={ExternalLinks.polar} target='_blank'>
                         <Heart className='mr-2 h-4 w-4' />
-                        Donate on Polar
+                        Open customer portal
                       </Link>
                     </Button>
                   </CardContent>
@@ -174,7 +174,7 @@ export default function ContributePage() {
               Code Contributions
             </CardTitle>
             <CardDescription>
-              Help improve TextBee by contributing to the codebase
+              Help improve Gabay SMS by contributing to the codebase
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -190,7 +190,7 @@ export default function ContributePage() {
                   <Button className='w-full' asChild>
                     <Link href={ExternalLinks.github} target='_blank'>
                       <Star className='mr-2 h-4 w-4' />
-                      Star on GitHub
+                      View upstream
                     </Link>
                   </Button>
                 </CardContent>
@@ -221,14 +221,14 @@ export default function ContributePage() {
                   <CardTitle className='text-lg'>Security Reports</CardTitle>
                   <CardDescription>
                     Report security vulnerabilities privately to{' '}
-                    <a href='mailto:security@textbee.dev'>
-                      security@textbee.dev
+                    <a href='mailto:security@gabay.online'>
+                      security@gabay.online
                     </a>
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Button className='w-full' variant='outline' asChild>
-                    <Link href='mailto:security@textbee.dev'>
+                    <Link href='mailto:security@gabay.online'>
                       <Shield className='mr-2 h-4 w-4' />
                       Report Vulnerability
                     </Link>
@@ -255,19 +255,19 @@ export default function ContributePage() {
               <Button variant='outline' asChild>
                 <Link href={ExternalLinks.discord} target='_blank'>
                   <MessageSquare className='mr-2 h-4 w-4' />
-                  Join Discord
+                  Contact Support
                 </Link>
               </Button>
               <Button variant='outline' asChild>
                 <Link href={ExternalLinks.twitter} target='_blank'>
                   <Twitter className='mr-2 h-4 w-4' />
-                  Follow us on X (Twitter)
+                  Visit Gabay
                 </Link>
               </Button>
               <Button variant='outline' asChild>
                 <Link href={ExternalLinks.linkedin} target='_blank'>
                   <Linkedin className='mr-2 h-4 w-4' />
-                  Connect on LinkedIn
+                  Visit Gabay
                 </Link>
               </Button>
             </div>

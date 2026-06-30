@@ -68,14 +68,14 @@ fun CredentialsScreen(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Enter your API key from your textbee.dev dashboard",
+                text = "Enter your API key from your sms.gabay.online dashboard",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             TextButton(
                 onClick = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/register"))
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/register"))
                     )
                 },
                 contentPadding = PaddingValues(0.dp)
@@ -124,7 +124,7 @@ fun CredentialsScreen(
                     .fillMaxWidth()
                     .height(52.dp)
             ) {
-                Text("Next →")
+                Text("Next")
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -152,7 +152,7 @@ private fun QrTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "1. Go to your textbee.dev dashboard",
+                    text = "1. Go to your sms.gabay.online dashboard",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
@@ -160,7 +160,7 @@ private fun QrTab(
                 TextButton(
                     onClick = {
                         context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/dashboard"))
+                            Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard"))
                         )
                     },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
@@ -208,7 +208,7 @@ private fun QrTab(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = apiKey.take(8) + "••••••••",
+                            text = apiKey.take(8) + "********",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -272,13 +272,13 @@ private fun ManualTab(
     TextButton(
         onClick = {
             context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/dashboard"))
+                Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard"))
             )
         },
         contentPadding = PaddingValues(0.dp)
     ) {
         Text(
-            text = "Get your API key at app.textbee.dev/dashboard",
+            text = "Get your API key at sms.gabay.online/dashboard",
             style = MaterialTheme.typography.bodySmall
         )
     }

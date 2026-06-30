@@ -1,11 +1,10 @@
-# textbee.dev - android sms gateway
+# Gabay SMS - Android SMS Gateway
 
-textbee.dev is an open-source SMS gateway that enables users to send and receive SMS messages via a web dashboard or a REST API. Perfect for businesses, developers, and hobbyists who need a reliable and cost-effective way to automate SMS messaging.
+Gabay SMS is Gabay's customized self-hosted Android SMS gateway. It lets Gabay send and receive SMS through registered Android devices from a web dashboard or REST API, using `sms.gabay.online` as the public domain.
 
 - **Technology stack**: React, Next.js, Node.js, NestJs, MongoDB, Android, Java
-- **Link**: [https://textbee.dev](https://textbee.dev/)
-
-![](https://ik.imagekit.io/vernu/textbee/textbee.dev-landingpage-screenshot.png?updatedAt=1749102564772)
+- **Link**: [https://sms.gabay.online](https://sms.gabay.online/)
+- **Upstream base**: [vernu/textbee](https://github.com/vernu/textbee)
 
 
 ## Features
@@ -24,10 +23,10 @@ textbee.dev is an open-source SMS gateway that enables users to send and receive
 
 ## Getting Started
 
-1. Go to [textbee.dev](https://textbee.dev) and register or login with your account
-2. Install the app on your android phone from [textbee.dev/download](https://textbee.dev/download)
+1. Go to [sms.gabay.online](https://sms.gabay.online) and register or login with your account
+2. Install the Gabay SMS app on your Android phone from [sms.gabay.online/download](https://sms.gabay.online/download)
 3. Open the app and grant the permissions for SMS
-4. Go to [textbee.dev/dashboard](https://textbee.dev/dashboard) and click register device/ generate API Key
+4. Go to [sms.gabay.online/dashboard](https://sms.gabay.online/dashboard) and click register device / generate API key
 5. Scan the QR code with the app or enter the API key manually
 6. You are ready to send SMS messages from the dashboard or from your application via the REST API
 
@@ -37,7 +36,7 @@ textbee.dev is an open-source SMS gateway that enables users to send and receive
 const API_KEY = 'YOUR_API_KEY';
 const DEVICE_ID = 'YOUR_DEVICE_ID';
 
-await axios.post(`https://api.textbee.dev/api/v1/gateway/devices/${DEVICE_ID}/send-sms`, {
+await axios.post(`https://sms.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/send-sms`, {
   recipients: [ '+251912345678' ],
   message: 'Hello World!',
 }, {
@@ -51,7 +50,7 @@ await axios.post(`https://api.textbee.dev/api/v1/gateway/devices/${DEVICE_ID}/se
 **Code Snippet**: Curl command to send an SMS message via the REST API
 
 ```bash
-curl -X POST "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/send-sms" \
+curl -X POST "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/send-sms" \
   -H 'x-api-key: YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -70,7 +69,7 @@ To receive SMS messages, you can enable the feature from the mobile app. You can
 const API_KEY = 'YOUR_API_KEY';
 const DEVICE_ID = 'YOUR_DEVICE_ID';
 
-await axios.get(`https://api.textbee.dev/api/v1/gateway/devices/${DEVICE_ID}/get-received-sms`, {
+await axios.get(`https://sms.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/get-received-sms`, {
   headers: {
     'x-api-key': API_KEY,
   },
@@ -81,7 +80,7 @@ await axios.get(`https://api.textbee.dev/api/v1/gateway/devices/${DEVICE_ID}/get
 **Code Snippet**: Curl command to fetch received SMS messages
 
 ```bash
-curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/get-received-sms"\
+curl -X GET "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/get-received-sms"\
   -H "x-api-key: YOUR_API_KEY"
 ```
 
@@ -102,7 +101,7 @@ curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/get-r
 
 1. Clone the repository and navigate to the Android project directory.
 2. Update the `google-services.json` file with your Firebase project configuration.
-3. Update every occurrence of `textbee.dev` with your own domain in the project.
+3. Place the Firebase `google-services.json` files under the matching `android/app/src/{dev,prod}` source set.
 4. Build the app using Android Studio or the command line:
    ```bash
    ./gradlew assembleRelease
@@ -147,13 +146,13 @@ curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/get-r
 1. Install `pnpm`, `pm2`, and `Caddy` on your VPS.
 2. Use `pm2` to manage your Node.js processes:
    ```bash
-   pm2 start dist/main.js --name textbee-api
+   pm2 start dist/main.js --name gabay-sms-api
    ```
-3. Configure `Caddy` to serve your web application and API. Example Caddyfile:
+3. Configure `Caddy` to serve the API under `/api/*` and the dashboard for everything else. Example Caddyfile:
    ```
-   textbee.dev {
-       reverse_proxy /api/* localhost:3000
-       reverse_proxy /* localhost:3001
+   sms.gabay.online {
+       reverse_proxy /api/* localhost:3001
+       reverse_proxy /* localhost:3000
    }
    ```
 4. Ensure your domain points to your VPS and Caddy is configured properly.
@@ -167,7 +166,7 @@ curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/get-r
    && cd ../api && cp .env.example .env
    ```
 2. Navigate to root folder and execute docker-compose.yml file.    
-   This will spin up `web` container, `api` container alongside with `MongoDB` and `MongoExpress`. `TextBee` database will be automatically created.
+   This will spin up `web` and `api` containers alongside MongoDB, Redis, and Mongo Express. The `gabay_sms` database will be automatically created.
    ```bash
    docker compose up -d
    ```
@@ -176,20 +175,15 @@ curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/get-r
    docker compose down
    ```   
 
-## Contributing
+## Upstream attribution
 
-Contributions are welcome!
-
-1. [Fork](https://github.com/vernu/textbee/fork) the project.
-2. Create a feature or bugfix branch from `main` branch.
-3. Make sure your commit messages and PR comment summaries are descriptive.
-4. Create a pull request to the `main` branch.
+This Gabay SMS fork is based on the open-source [TextBee](https://github.com/vernu/textbee) project. Keep the upstream license intact when syncing or rebasing.
 
 ## Bug Reporting and Feature Requests
 
-Please feel free to [create an issue](https://github.com/vernu/textbee/issues/new) in the repository for any bug reports or feature requests. Make sure to provide a detailed description of the issue or feature you are requesting and properly label whether it is a bug or a feature request.
+Please report Gabay SMS bugs or feature requests through the Gabay engineering/support channel.
 
-Please note that if you discover any vulnerability or security issue, we kindly request that you refrain from creating a public issue. Instead, send an email detailing the vulnerability to contact@textbee.dev.
+Please note that if you discover any vulnerability or security issue, we kindly request that you refrain from creating a public issue. Instead, send an email detailing the vulnerability to support@gabay.online.
 
 ## For support, feedback, and questions
-Feel free to reach out to us at contact@textbee.dev or [Join our Discord server](https://discord.gg/d7vyfBpWbQ)
+Feel free to reach out at support@gabay.online.

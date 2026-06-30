@@ -1,0 +1,649 @@
+  ▲ Next.js 14.2.26
+  - Local:        http://localhost:3023
+
+ ✓ Starting...
+ ✓ Ready in 2.3s
+ ○ Compiling /middleware ...
+ ✓ Compiled /middleware in 1037ms (217 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 8.1s (1534 modules)
+ ✓ Compiled in 251ms (529 modules)
+ GET /login 200 in 8944ms
+ GET /login 200 in 406ms
+ ✓ Compiled /api/auth/[...nextauth] in 448ms (1009 modules)
+ GET /api/auth/session 200 in 1101ms
+ GET /login 200 in 408ms
+ GET /api/auth/session 200 in 131ms
+ ○ Compiling /register ...
+ ✓ Compiled /register in 865ms (1552 modules)
+ ✓ Compiled in 192ms (535 modules)
+ GET /register?redirect=&_rsc=ub1qb 200 in 296ms
+ GET /register?redirect=&_rsc=186gf 200 in 245ms
+   Reload env: .env
+ ✓ Compiled in 6.6s (1765 modules)
+ GET /register?redirect= 200 in 841ms
+ ○ Compiling /api/auth/[...nextauth] ...
+ ✓ Compiled /api/auth/[...nextauth] in 548ms (1017 modules)
+ GET /api/auth/session 200 in 916ms
+ GET /api/auth/providers 200 in 32ms
+ GET /api/auth/csrf 200 in 12ms
+AxiosError: Client network socket disconnected before secure TLS connection was established
+    at AxiosError.from (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/core/AxiosError.js:97:14)
+    at RedirectableRequest.handleRequestError (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/adapters/http.js:650:75)
+    at RedirectableRequest.emit (node:events:508:28)
+    at eventHandlers.<computed> (webpack-internal:///(rsc)/./node_modules/.pnpm/follow-redirects@1.15.9/node_modules/follow-redirects/index.js:49:24)
+    at ClientRequest.emit (node:events:508:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at TLSSocket.socketErrorListener (node:_http_client:575:5)
+    at TLSSocket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+    at Axios.request (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/core/Axios.js:57:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async Object.authorize (webpack-internal:///(rsc)/./lib/auth.ts:80:33)
+    at async Object.callback (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/core/routes/callback.js:328:14)
+    at async AuthHandler (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/core/index.js:260:28)
+    at async NextAuthRouteHandler (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/next/index.js:57:28)
+    at async NextAuth._args$ (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/next/index.js:89:16)
+    at async C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:57228
+    at async eT.execute (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:46851)
+    at async eT.handle (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:58760)
+    at async doRender (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1366:42)
+    at async cacheEntry.responseCache.get.routeKind (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1576:40)
+    at async DevServer.renderToResponseWithComponentsImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1496:28)
+    at async DevServer.renderPageComponent (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1924:24)
+    at async DevServer.renderToResponseImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1962:32)
+    at async DevServer.pipeImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:922:25)
+    at async NextNodeServer.handleCatchallRenderRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\next-server.js:272:17)
+    at async DevServer.handleRequestImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:818:17)
+    at async C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\dev\next-dev-server.js:339:20
+    at async Span.traceAsyncFn (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\trace\trace.js:154:20)
+    at async DevServer.handleRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\dev\next-dev-server.js:336:24)
+    at async invokeRender (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:178:21)
+    at async handleRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:355:24)
+    at async requestHandlerImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:379:13)
+    at async Server.requestListener (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\start-server.js:141:13) {
+  localAddress: undefined,
+  port: 443,
+  host: 'sms.gabay.online',
+  path: null,
+  code: 'ECONNRESET',
+  config: {
+    transitional: {
+      silentJSONParsing: true,
+      forcedJSONParsing: true,
+      clarifyTimeoutError: false
+    },
+    adapter: [ 'xhr', 'http', 'fetch' ],
+    transformRequest: [ [Function: transformRequest] ],
+    transformResponse: [ [Function: transformResponse] ],
+    timeout: 0,
+    xsrfCookieName: 'XSRF-TOKEN',
+    xsrfHeaderName: 'X-XSRF-TOKEN',
+    maxContentLength: -1,
+    maxBodyLength: -1,
+    env: { FormData: [Function [FormData]], Blob: [class Blob] },
+    validateStatus: [Function: validateStatus],
+    headers: Object [AxiosHeaders] {
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
+      'User-Agent': 'axios/1.8.2',
+      'Content-Length': '156',
+      'Accept-Encoding': 'gzip, compress, deflate, br'
+    },
+    baseURL: 'https://sms.gabay.online/api/v1',
+    method: 'post',
+    url: '/auth/register',
+    data: '{"email":"abz.devs@gmail.com","password":"D3b1an!?","name":"CLINT ANTHONY ESCANIER ABUEVA","phone":"+639935167508","turnstileToken":"XXXX.DUMMY.TOKEN.XXXX"}',
+    allowAbsoluteUrls: true
+  },
+  request: <ref *1> Writable {
+    _events: {
+      close: undefined,
+      error: [Function: handleRequestError],
+      prefinish: undefined,
+      finish: undefined,
+      drain: undefined,
+      response: [Function: handleResponse],
+      socket: [Function: handleRequestSocket]
+    },
+    _writableState: WritableState {
+      highWaterMark: 16384,
+      length: 0,
+      corked: 0,
+      onwrite: [Function: bound onwrite],
+      writelen: 0,
+      bufferedIndex: 0,
+      pendingcb: 0,
+      Symbol(kState): 17580812,
+      Symbol(kBufferedValue): null
+    },
+    _maxListeners: undefined,
+    _options: {
+      maxRedirects: 21,
+      maxBodyLength: Infinity,
+      protocol: 'https:',
+      path: '/api/v1/auth/register',
+      method: 'POST',
+      headers: [Object: null prototype],
+      agents: [Object],
+      auth: undefined,
+      family: undefined,
+      beforeRedirect: [Function: dispatchBeforeRedirect],
+      beforeRedirects: [Object],
+      hostname: 'sms.gabay.online',
+      port: '',
+      agent: undefined,
+      nativeProtocols: [Object],
+      pathname: '/api/v1/auth/register'
+    },
+    _ended: false,
+    _ending: true,
+    _redirectCount: 0,
+    _redirects: [],
+    _requestBodyLength: 156,
+    _requestBodyBuffers: [ [Object] ],
+    _eventsCount: 3,
+    _onNativeResponse: [Function (anonymous)],
+    _currentRequest: ClientRequest {
+      _events: [Object: null prototype],
+      _eventsCount: 7,
+      _maxListeners: undefined,
+      outputData: [],
+      outputSize: 0,
+      writable: true,
+      destroyed: false,
+      _last: false,
+      chunkedEncoding: false,
+      shouldKeepAlive: true,
+      maxRequestsOnConnectionReached: false,
+      _defaultKeepAlive: true,
+      useChunkedEncodingByDefault: true,
+      sendDate: false,
+      _removedConnection: false,
+      _removedContLen: false,
+      _removedTE: false,
+      strictContentLength: false,
+      _contentLength: 156,
+      _hasBody: true,
+      _trailer: '',
+      finished: false,
+      _headerSent: true,
+      _closed: false,
+      _header: 'POST /api/v1/auth/register HTTP/1.1\r\n' +
+        'Accept: application/json, text/plain, */*\r\n' +
+        'Content-Type: application/json\r\n' +
+        'User-Agent: axios/1.8.2\r\n' +
+        'Content-Length: 156\r\n' +
+        'Accept-Encoding: gzip, compress, deflate, br\r\n' +
+        'Host: sms.gabay.online\r\n' +
+        'Connection: keep-alive\r\n' +
+        '\r\n',
+      _keepAliveTimeout: 0,
+      _onPendingData: [Function: nop],
+      agent: [Agent],
+      socketPath: undefined,
+      method: 'POST',
+      maxHeaderSize: undefined,
+      insecureHTTPParser: undefined,
+      joinDuplicateHeaders: undefined,
+      path: '/api/v1/auth/register',
+      _ended: false,
+      res: null,
+      aborted: false,
+      timeoutCb: [Function: emitRequestTimeout],
+      upgradeOrConnect: false,
+      parser: null,
+      maxHeadersCount: null,
+      reusedSocket: false,
+      host: 'sms.gabay.online',
+      protocol: 'https:',
+      _redirectable: [Circular *1],
+      Symbol(shapeMode): false,
+      Symbol(kCapture): false,
+      Symbol(kBytesWritten): 0,
+      Symbol(kNeedDrain): false,
+      Symbol(corked): 0,
+      Symbol(kChunkedBuffer): [],
+      Symbol(kChunkedLength): 0,
+      Symbol(kSocket): [TLSSocket],
+      Symbol(kOutHeaders): [Object: null prototype],
+      Symbol(errored): null,
+      Symbol(kHighWaterMark): 16384,
+      Symbol(kRejectNonStandardBodyWrites): false,
+      Symbol(kUniqueHeaders): null
+    },
+    _currentUrl: 'https://sms.gabay.online/api/v1/auth/register',
+    Symbol(shapeMode): true,
+    Symbol(kCapture): false
+  },
+  cause: Error: Client network socket disconnected before secure TLS connection was established
+      at TLSSocket.onConnectEnd (node:_tls_wrap:1702:19)
+      at TLSSocket.emit (node:events:520:35)
+      at endReadableNT (node:internal/streams/readable:1701:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+    code: 'ECONNRESET',
+    path: null,
+    host: 'sms.gabay.online',
+    port: 443,
+    localAddress: undefined
+  }
+}
+ POST /api/auth/callback/email-password-register 401 in 1182ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1114ms (1556 modules)
+ GET /.well-known/appspecific/com.chrome.devtools.json 404 in 1431ms
+ GET /register?redirect=&_rsc=186gf 200 in 320ms
+ GET /api/auth/providers 200 in 32ms
+ GET /api/auth/csrf 200 in 10ms
+AxiosError: Client network socket disconnected before secure TLS connection was established
+    at AxiosError.from (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/core/AxiosError.js:97:14)
+    at RedirectableRequest.handleRequestError (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/adapters/http.js:650:75)
+    at RedirectableRequest.emit (node:events:508:28)
+    at eventHandlers.<computed> (webpack-internal:///(rsc)/./node_modules/.pnpm/follow-redirects@1.15.9/node_modules/follow-redirects/index.js:49:24)
+    at ClientRequest.emit (node:events:508:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at TLSSocket.socketErrorListener (node:_http_client:575:5)
+    at TLSSocket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+    at Axios.request (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/core/Axios.js:57:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async Object.authorize (webpack-internal:///(rsc)/./lib/auth.ts:80:33)
+    at async Object.callback (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/core/routes/callback.js:328:14)
+    at async AuthHandler (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/core/index.js:260:28)
+    at async NextAuthRouteHandler (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/next/index.js:57:28)
+    at async NextAuth._args$ (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/next/index.js:89:16)
+    at async C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:57228
+    at async eT.execute (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:46851)
+    at async eT.handle (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:58760)
+    at async doRender (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1366:42)
+    at async cacheEntry.responseCache.get.routeKind (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1576:40)
+    at async DevServer.renderToResponseWithComponentsImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1496:28)
+    at async DevServer.renderPageComponent (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1924:24)
+    at async DevServer.renderToResponseImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1962:32)
+    at async DevServer.pipeImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:922:25)
+    at async NextNodeServer.handleCatchallRenderRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\next-server.js:272:17)
+    at async DevServer.handleRequestImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:818:17)
+    at async C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\dev\next-dev-server.js:339:20
+    at async Span.traceAsyncFn (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\trace\trace.js:154:20)
+    at async DevServer.handleRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\dev\next-dev-server.js:336:24)
+    at async invokeRender (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:178:21)
+    at async handleRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:355:24)
+    at async requestHandlerImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:379:13)
+    at async Server.requestListener (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\start-server.js:141:13) {
+  localAddress: undefined,
+  port: 443,
+  host: 'sms.gabay.online',
+  path: null,
+  code: 'ECONNRESET',
+  config: {
+    transitional: {
+      silentJSONParsing: true,
+      forcedJSONParsing: true,
+      clarifyTimeoutError: false
+    },
+    adapter: [ 'xhr', 'http', 'fetch' ],
+    transformRequest: [ [Function: transformRequest] ],
+    transformResponse: [ [Function: transformResponse] ],
+    timeout: 0,
+    xsrfCookieName: 'XSRF-TOKEN',
+    xsrfHeaderName: 'X-XSRF-TOKEN',
+    maxContentLength: -1,
+    maxBodyLength: -1,
+    env: { FormData: [Function [FormData]], Blob: [class Blob] },
+    validateStatus: [Function: validateStatus],
+    headers: Object [AxiosHeaders] {
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
+      'User-Agent': 'axios/1.8.2',
+      'Content-Length': '156',
+      'Accept-Encoding': 'gzip, compress, deflate, br'
+    },
+    baseURL: 'https://sms.gabay.online/api/v1',
+    method: 'post',
+    url: '/auth/register',
+    data: '{"email":"abz.devs@gmail.com","password":"D3b1an!?","name":"CLINT ANTHONY ESCANIER ABUEVA","phone":"+639935167508","turnstileToken":"XXXX.DUMMY.TOKEN.XXXX"}',
+    allowAbsoluteUrls: true
+  },
+  request: <ref *1> Writable {
+    _events: {
+      close: undefined,
+      error: [Function: handleRequestError],
+      prefinish: undefined,
+      finish: undefined,
+      drain: undefined,
+      response: [Function: handleResponse],
+      socket: [Function: handleRequestSocket]
+    },
+    _writableState: WritableState {
+      highWaterMark: 16384,
+      length: 0,
+      corked: 0,
+      onwrite: [Function: bound onwrite],
+      writelen: 0,
+      bufferedIndex: 0,
+      pendingcb: 0,
+      Symbol(kState): 17580812,
+      Symbol(kBufferedValue): null
+    },
+    _maxListeners: undefined,
+    _options: {
+      maxRedirects: 21,
+      maxBodyLength: Infinity,
+      protocol: 'https:',
+      path: '/api/v1/auth/register',
+      method: 'POST',
+      headers: [Object: null prototype],
+      agents: [Object],
+      auth: undefined,
+      family: undefined,
+      beforeRedirect: [Function: dispatchBeforeRedirect],
+      beforeRedirects: [Object],
+      hostname: 'sms.gabay.online',
+      port: '',
+      agent: undefined,
+      nativeProtocols: [Object],
+      pathname: '/api/v1/auth/register'
+    },
+    _ended: false,
+    _ending: true,
+    _redirectCount: 0,
+    _redirects: [],
+    _requestBodyLength: 156,
+    _requestBodyBuffers: [ [Object] ],
+    _eventsCount: 3,
+    _onNativeResponse: [Function (anonymous)],
+    _currentRequest: ClientRequest {
+      _events: [Object: null prototype],
+      _eventsCount: 7,
+      _maxListeners: undefined,
+      outputData: [],
+      outputSize: 0,
+      writable: true,
+      destroyed: false,
+      _last: false,
+      chunkedEncoding: false,
+      shouldKeepAlive: true,
+      maxRequestsOnConnectionReached: false,
+      _defaultKeepAlive: true,
+      useChunkedEncodingByDefault: true,
+      sendDate: false,
+      _removedConnection: false,
+      _removedContLen: false,
+      _removedTE: false,
+      strictContentLength: false,
+      _contentLength: 156,
+      _hasBody: true,
+      _trailer: '',
+      finished: false,
+      _headerSent: true,
+      _closed: false,
+      _header: 'POST /api/v1/auth/register HTTP/1.1\r\n' +
+        'Accept: application/json, text/plain, */*\r\n' +
+        'Content-Type: application/json\r\n' +
+        'User-Agent: axios/1.8.2\r\n' +
+        'Content-Length: 156\r\n' +
+        'Accept-Encoding: gzip, compress, deflate, br\r\n' +
+        'Host: sms.gabay.online\r\n' +
+        'Connection: keep-alive\r\n' +
+        '\r\n',
+      _keepAliveTimeout: 0,
+      _onPendingData: [Function: nop],
+      agent: [Agent],
+      socketPath: undefined,
+      method: 'POST',
+      maxHeaderSize: undefined,
+      insecureHTTPParser: undefined,
+      joinDuplicateHeaders: undefined,
+      path: '/api/v1/auth/register',
+      _ended: false,
+      res: null,
+      aborted: false,
+      timeoutCb: [Function: emitRequestTimeout],
+      upgradeOrConnect: false,
+      parser: null,
+      maxHeadersCount: null,
+      reusedSocket: false,
+      host: 'sms.gabay.online',
+      protocol: 'https:',
+      _redirectable: [Circular *1],
+      Symbol(shapeMode): false,
+      Symbol(kCapture): false,
+      Symbol(kBytesWritten): 0,
+      Symbol(kNeedDrain): false,
+      Symbol(corked): 0,
+      Symbol(kChunkedBuffer): [],
+      Symbol(kChunkedLength): 0,
+      Symbol(kSocket): [TLSSocket],
+      Symbol(kOutHeaders): [Object: null prototype],
+      Symbol(errored): null,
+      Symbol(kHighWaterMark): 16384,
+      Symbol(kRejectNonStandardBodyWrites): false,
+      Symbol(kUniqueHeaders): null
+    },
+    _currentUrl: 'https://sms.gabay.online/api/v1/auth/register',
+    Symbol(shapeMode): true,
+    Symbol(kCapture): false
+  },
+  cause: Error: Client network socket disconnected before secure TLS connection was established
+      at TLSSocket.onConnectEnd (node:_tls_wrap:1702:19)
+      at TLSSocket.emit (node:events:520:35)
+      at endReadableNT (node:internal/streams/readable:1701:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+    code: 'ECONNRESET',
+    path: null,
+    host: 'sms.gabay.online',
+    port: 443,
+    localAddress: undefined
+  }
+}
+ POST /api/auth/callback/email-password-register 401 in 1244ms
+ GET /api/auth/providers 200 in 407ms
+ GET /api/auth/csrf 200 in 19ms
+AxiosError: Client network socket disconnected before secure TLS connection was established
+    at AxiosError.from (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/core/AxiosError.js:97:14)
+    at RedirectableRequest.handleRequestError (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/adapters/http.js:650:75)
+    at RedirectableRequest.emit (node:events:508:28)
+    at eventHandlers.<computed> (webpack-internal:///(rsc)/./node_modules/.pnpm/follow-redirects@1.15.9/node_modules/follow-redirects/index.js:49:24)
+    at ClientRequest.emit (node:events:508:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at TLSSocket.socketErrorListener (node:_http_client:575:5)
+    at TLSSocket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21)
+    at Axios.request (webpack-internal:///(rsc)/./node_modules/.pnpm/axios@1.8.2/node_modules/axios/lib/core/Axios.js:57:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async Object.authorize (webpack-internal:///(rsc)/./lib/auth.ts:80:33)
+    at async Object.callback (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/core/routes/callback.js:328:14)
+    at async AuthHandler (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/core/index.js:260:28)
+    at async NextAuthRouteHandler (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/next/index.js:57:28)
+    at async NextAuth._args$ (webpack-internal:///(rsc)/./node_modules/.pnpm/next-auth@4.24.10_next@14.2_acbebae151657be9bed438eaa9bff71a/node_modules/next-auth/next/index.js:89:16)
+    at async C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:57228
+    at async eT.execute (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:46851)
+    at async eT.handle (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\compiled\next-server\app-route.runtime.dev.js:6:58760)
+    at async doRender (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1366:42)
+    at async cacheEntry.responseCache.get.routeKind (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1576:40)
+    at async DevServer.renderToResponseWithComponentsImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1496:28)
+    at async DevServer.renderPageComponent (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1924:24)
+    at async DevServer.renderToResponseImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:1962:32)
+    at async DevServer.pipeImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:922:25)
+    at async NextNodeServer.handleCatchallRenderRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\next-server.js:272:17)
+    at async DevServer.handleRequestImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\base-server.js:818:17)
+    at async C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\dev\next-dev-server.js:339:20
+    at async Span.traceAsyncFn (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\trace\trace.js:154:20)
+    at async DevServer.handleRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\dev\next-dev-server.js:336:24)
+    at async invokeRender (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:178:21)
+    at async handleRequest (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:355:24)
+    at async requestHandlerImpl (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\router-server.js:379:13)
+    at async Server.requestListener (C:\Users\abz_g\Desktop\Gabay\Codebase\textbee\web\node_modules\.pnpm\next@14.2.26_@opentelemetry_4b1a896de58d0405d72b548f62aec4e9\node_modules\next\dist\server\lib\start-server.js:141:13) {
+  localAddress: undefined,
+  port: 443,
+  host: 'sms.gabay.online',
+  path: null,
+  code: 'ECONNRESET',
+  config: {
+    transitional: {
+      silentJSONParsing: true,
+      forcedJSONParsing: true,
+      clarifyTimeoutError: false
+    },
+    adapter: [ 'xhr', 'http', 'fetch' ],
+    transformRequest: [ [Function: transformRequest] ],
+    transformResponse: [ [Function: transformResponse] ],
+    timeout: 0,
+    xsrfCookieName: 'XSRF-TOKEN',
+    xsrfHeaderName: 'X-XSRF-TOKEN',
+    maxContentLength: -1,
+    maxBodyLength: -1,
+    env: { FormData: [Function [FormData]], Blob: [class Blob] },
+    validateStatus: [Function: validateStatus],
+    headers: Object [AxiosHeaders] {
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
+      'User-Agent': 'axios/1.8.2',
+      'Content-Length': '156',
+      'Accept-Encoding': 'gzip, compress, deflate, br'
+    },
+    baseURL: 'https://sms.gabay.online/api/v1',
+    method: 'post',
+    url: '/auth/register',
+    data: '{"email":"abz.devs@gmail.com","password":"D3b1an!?","name":"CLINT ANTHONY ESCANIER ABUEVA","phone":"+639935167508","turnstileToken":"XXXX.DUMMY.TOKEN.XXXX"}',
+    allowAbsoluteUrls: true
+  },
+  request: <ref *1> Writable {
+    _events: {
+      close: undefined,
+      error: [Function: handleRequestError],
+      prefinish: undefined,
+      finish: undefined,
+      drain: undefined,
+      response: [Function: handleResponse],
+      socket: [Function: handleRequestSocket]
+    },
+    _writableState: WritableState {
+      highWaterMark: 16384,
+      length: 0,
+      corked: 0,
+      onwrite: [Function: bound onwrite],
+      writelen: 0,
+      bufferedIndex: 0,
+      pendingcb: 0,
+      Symbol(kState): 17580812,
+      Symbol(kBufferedValue): null
+    },
+    _maxListeners: undefined,
+    _options: {
+      maxRedirects: 21,
+      maxBodyLength: Infinity,
+      protocol: 'https:',
+      path: '/api/v1/auth/register',
+      method: 'POST',
+      headers: [Object: null prototype],
+      agents: [Object],
+      auth: undefined,
+      family: undefined,
+      beforeRedirect: [Function: dispatchBeforeRedirect],
+      beforeRedirects: [Object],
+      hostname: 'sms.gabay.online',
+      port: '',
+      agent: undefined,
+      nativeProtocols: [Object],
+      pathname: '/api/v1/auth/register'
+    },
+    _ended: false,
+    _ending: true,
+    _redirectCount: 0,
+    _redirects: [],
+    _requestBodyLength: 156,
+    _requestBodyBuffers: [ [Object] ],
+    _eventsCount: 3,
+    _onNativeResponse: [Function (anonymous)],
+    _currentRequest: ClientRequest {
+      _events: [Object: null prototype],
+      _eventsCount: 7,
+      _maxListeners: undefined,
+      outputData: [],
+      outputSize: 0,
+      writable: true,
+      destroyed: false,
+      _last: false,
+      chunkedEncoding: false,
+      shouldKeepAlive: true,
+      maxRequestsOnConnectionReached: false,
+      _defaultKeepAlive: true,
+      useChunkedEncodingByDefault: true,
+      sendDate: false,
+      _removedConnection: false,
+      _removedContLen: false,
+      _removedTE: false,
+      strictContentLength: false,
+      _contentLength: 156,
+      _hasBody: true,
+      _trailer: '',
+      finished: false,
+      _headerSent: true,
+      _closed: false,
+      _header: 'POST /api/v1/auth/register HTTP/1.1\r\n' +
+        'Accept: application/json, text/plain, */*\r\n' +
+        'Content-Type: application/json\r\n' +
+        'User-Agent: axios/1.8.2\r\n' +
+        'Content-Length: 156\r\n' +
+        'Accept-Encoding: gzip, compress, deflate, br\r\n' +
+        'Host: sms.gabay.online\r\n' +
+        'Connection: keep-alive\r\n' +
+        '\r\n',
+      _keepAliveTimeout: 0,
+      _onPendingData: [Function: nop],
+      agent: [Agent],
+      socketPath: undefined,
+      method: 'POST',
+      maxHeaderSize: undefined,
+      insecureHTTPParser: undefined,
+      joinDuplicateHeaders: undefined,
+      path: '/api/v1/auth/register',
+      _ended: false,
+      res: null,
+      aborted: false,
+      timeoutCb: [Function: emitRequestTimeout],
+      upgradeOrConnect: false,
+      parser: null,
+      maxHeadersCount: null,
+      reusedSocket: false,
+      host: 'sms.gabay.online',
+      protocol: 'https:',
+      _redirectable: [Circular *1],
+      Symbol(shapeMode): false,
+      Symbol(kCapture): false,
+      Symbol(kBytesWritten): 0,
+      Symbol(kNeedDrain): false,
+      Symbol(corked): 0,
+      Symbol(kChunkedBuffer): [],
+      Symbol(kChunkedLength): 0,
+      Symbol(kSocket): [TLSSocket],
+      Symbol(kOutHeaders): [Object: null prototype],
+      Symbol(errored): null,
+      Symbol(kHighWaterMark): 16384,
+      Symbol(kRejectNonStandardBodyWrites): false,
+      Symbol(kUniqueHeaders): null
+    },
+    _currentUrl: 'https://sms.gabay.online/api/v1/auth/register',
+    Symbol(shapeMode): true,
+    Symbol(kCapture): false
+  },
+  cause: Error: Client network socket disconnected before secure TLS connection was established
+      at TLSSocket.onConnectEnd (node:_tls_wrap:1702:19)
+      at TLSSocket.emit (node:events:520:35)
+      at endReadableNT (node:internal/streams/readable:1701:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+    code: 'ECONNRESET',
+    path: null,
+    host: 'sms.gabay.online',
+    port: 443,
+    localAddress: undefined
+  }
+}
+ POST /api/auth/callback/email-password-register 401 in 1287ms

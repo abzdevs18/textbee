@@ -149,7 +149,7 @@ const GenerateApiKey = forwardRef<GenerateApiKeyHandle, GenerateApiKeyProps>(
                     For Device Registration
                   </h4>
                   <p className='text-muted-foreground'>
-                    Open the TextBee app and scan the QR code, or manually enter
+                    Open the Gabay SMS app and scan the QR code, or manually enter
                     the API key in the app and click register/update.
                   </p>
                 </div>
@@ -177,7 +177,7 @@ const GenerateApiKey = forwardRef<GenerateApiKeyHandle, GenerateApiKeyProps>(
                   <h4 className='font-medium'>For External Services</h4>
                   <p className='text-muted-foreground'>
                     Copy the API key and store it securely for authenticating your
-                    external service with TextBee.
+                    external service with Gabay SMS.
                   </p>
                 </div>
 

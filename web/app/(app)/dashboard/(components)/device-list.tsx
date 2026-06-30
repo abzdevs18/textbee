@@ -180,7 +180,7 @@ export default function DeviceList() {
                 </p>
               </div>
               <Button variant='outline' size='sm' asChild className='shrink-0'>
-                <Link href='/pricing'>Upgrade plan</Link>
+                <Link href='/checkout/pro'>Upgrade plan</Link>
               </Button>
             </div>
           )}
@@ -352,7 +352,7 @@ export default function DeviceList() {
           </DialogHeader>
           <ol className='list-decimal space-y-3 pl-5 text-left text-sm text-muted-foreground'>
             <li>
-              Download textbee app from{' '}
+              Download the Gabay SMS app from{' '}
               <a
                 href={Routes.downloadAndroidApp}
                 target='_blank'
@@ -369,7 +369,7 @@ export default function DeviceList() {
               app instead
             </li>
             <li>
-              Open the textbee.dev app and scan the QR code or paste the key manually. Your device should appear in the list when the link succeeds.
+              Open the Gabay SMS app and scan the QR code or paste the key manually. Your device should appear in the list when the link succeeds.
             </li>
           </ol>
           <DialogFooter className='flex-col gap-2 sm:flex-row sm:justify-between'>

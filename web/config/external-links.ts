@@ -1,5 +1,5 @@
 const POLAR_CUSTOMER_PORTAL_REQUEST_BASE =
-  'https://polar.sh/textbee/portal/request'
+  process.env.NEXT_PUBLIC_CUSTOMER_PORTAL_REQUEST_URL || 'https://gabay.online'
 
 export function polarCustomerPortalRequestUrl(
   email?: string | null
@@ -10,10 +10,10 @@ export function polarCustomerPortalRequestUrl(
 }
 
 export const ExternalLinks = {
-  patreon: 'https://patreon.com/vernu',
+  patreon: 'https://gabay.online',
   github: 'https://github.com/vernu/textbee',
-  discord: 'https://discord.gg/d7vyfBpWbQ',
-  polar: 'https://donate.textbee.dev',
-  twitter: 'https://x.com/textbeedotdev',
-  linkedin: 'https://www.linkedin.com/company/textbeedotdev',
+  discord: 'mailto:support@gabay.online',
+  polar: 'https://gabay.online',
+  twitter: 'https://gabay.online',
+  linkedin: 'https://gabay.online',
 }

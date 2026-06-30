@@ -923,7 +923,7 @@ export class WebhookService {
       deletedAt: null,
     })
 
-    const ctaUrlBase = process.env.FRONTEND_URL || 'https://app.textbee.dev'
+    const ctaUrlBase = process.env.FRONTEND_URL || 'https://sms.gabay.online'
     const disabledInThisRun: {
       subscriptionId: string
       deliveryUrl: string
@@ -992,7 +992,7 @@ export class WebhookService {
       try {
         await this.mailService.sendEmailFromTemplate({
           to: user.email,
-          subject: 'Your webhook was paused – textbee',
+          subject: 'Your webhook was paused - Gabay SMS',
           template: 'webhook-subscription-disabled',
           context: {
             name: user.name?.split(' ')?.[0] || 'there',
@@ -1004,7 +1004,7 @@ export class WebhookService {
             lookbackDays,
             ctaUrl: `${ctaUrlBase}/dashboard/account`,
             ctaLabel: 'Re-enable in dashboard',
-            brandName: 'textbee.dev',
+            brandName: 'Gabay SMS',
           },
         })
       } catch (e) {
@@ -1028,7 +1028,7 @@ export class WebhookService {
             runAt,
             count: disabledInThisRun.length,
             disabledList: disabledInThisRun,
-            brandName: 'textbee.dev',
+            brandName: 'Gabay SMS',
           },
         })
       } catch (e) {

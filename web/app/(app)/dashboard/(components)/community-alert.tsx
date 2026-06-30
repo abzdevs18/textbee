@@ -15,19 +15,19 @@ export default function CommunityAlert() {
           <Button variant='outline' size='sm' asChild>
             <Link href={ExternalLinks.github} target='_blank' prefetch={false}>
               <Github className='mr-1 h-4 w-4' />
-              GitHub
+              Source
             </Link>
           </Button>
           <Button variant='outline' size='sm' asChild>
             <Link href={ExternalLinks.patreon} target='_blank' prefetch={false}>
               <Heart className='mr-1 h-4 w-4' />
-              Patreon
+              Gabay Online
             </Link>
           </Button>
           <Button variant='outline' size='sm' asChild>
             <Link href={ExternalLinks.discord} target='_blank' prefetch={false}>
               <MessageSquare className='mr-1 h-4 w-4' />
-              Discord
+              Support
             </Link>
           </Button>
         </div>

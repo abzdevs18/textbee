@@ -114,7 +114,7 @@ export default function AppHeader({ session }: { session: Session }) {
                 className='flex items-center gap-2 py-2'
               >
                 <MessageSquarePlus className='h-4 w-4' />
-                Contribute
+                Support
               </Link>
               <Button
                 onClick={handleLogout}
@@ -153,17 +153,14 @@ export default function AppHeader({ session }: { session: Session }) {
             href={Routes.landingPage}
           >
             <Image
-              src='/images/logo.png'
-              alt='textbee Logo'
-              width={24}
-              height={24}
-              className='h-6 w-6 bg-white rounded-full'
+              src='/images/gabay-logo.png'
+              alt='Gabay SMS Logo'
+              width={28}
+              height={28}
+              className='h-7 w-7 rounded-full bg-[#3d8216] p-0.5'
             />
-            <span className='font-bold'>
-              text<span className='text-primary'>bee</span>
-              <span className='text-xs align-center text-gray-500 dark:text-gray-400'>
-                .dev
-              </span>
+            <span className='font-bold text-slate-900 dark:text-slate-100'>
+              Gabay<span className='text-primary'> SMS</span>
             </span>
           </Link>
         </div>
@@ -175,7 +172,7 @@ export default function AppHeader({ session }: { session: Session }) {
               className='items-center gap-2 pr-8 hidden md:block'
             >
               <Button variant='outline' className='px-4 py-2 text-sm'>
-                Contribute
+                Support
               </Button>
             </Link>
 

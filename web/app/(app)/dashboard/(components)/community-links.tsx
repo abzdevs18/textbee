@@ -29,37 +29,37 @@ export default function CommunityLinks() {
     {
       icon: '/images/facebook.svg',
       name: 'Facebook',
-      url: 'https://www.facebook.com/sharer/sharer.php?u=https://textbee.dev',
+      url: 'https://www.facebook.com/sharer/sharer.php?u=https://sms.gabay.online',
     },
     {
       icon: '/images/x.svg',
       name: 'Twitter',
-      url: 'https://twitter.com/intent/tweet?url=https://textbee.dev&text=🚀+Just+discovered+@textbeedotdev+-+an+amazing+SMS+gateway+platform!+Perfect+for+those+who+need+reliable+sms+integration.',
+      url: 'https://twitter.com/intent/tweet?url=https://sms.gabay.online&text=Gabay+SMS+is+a+simple+SMS+gateway+for+school+notifications.',
     },
     {
       icon: '/images/linkedin2.svg',
-      name: 'LinkedIn',
-      url: 'https://www.linkedin.com/sharing/share-offsite/?url=https://textbee.dev',
+      name: 'Gabay Online',
+      url: 'https://www.linkedin.com/sharing/share-offsite/?url=https://sms.gabay.online',
     },
     {
       icon: '/images/reddit.svg',
       name: 'Reddit',
-      url: 'https://www.reddit.com/submit?url=https://textbee.dev&title=textbee.dev+-+Developer-friendly+SMS+Gateway+Platform',
+      url: 'https://www.reddit.com/submit?url=https://sms.gabay.online&title=Gabay+SMS+-+school-ready+SMS+gateway',
     },
     {
       icon: '/images/whatsapp.svg',
       name: 'WhatsApp',
-      url: "https://api.whatsapp.com/send?text=Hey!+Check+out+textbee.dev+-+it's+a+fantastic+SMS+gateway+platform+perfect+for+those+who+need+reliable+sms+integration+🚀+https://textbee.dev",
+      url: 'https://api.whatsapp.com/send?text=Check+out+Gabay+SMS+-+a+simple+SMS+gateway+for+school+notifications:+https://sms.gabay.online',
     },
     {
       icon: '/images/telegram.svg',
       name: 'Telegram',
-      url: 'https://t.me/share/url?url=https://textbee.dev&text=🔥+Found+an+awesome+SMS+gateway+platform+-+textbee.dev!+Great+for+those+who+need+reliable+sms+integration.',
+      url: 'https://t.me/share/url?url=https://sms.gabay.online&text=Gabay+SMS+-+school-ready+SMS+gateway',
     },
     {
       icon: '/images/gmail.svg',
       name: 'Email',
-      url: "mailto:?subject=Check+out+textbee.dev+-+SMS+Gateway+Platform&body=Hi!%0A%0AI+wanted+to+share+textbee.dev+with+you+-+it's+an+excellent+SMS+gateway+platform+that's+perfect+for+those+who+need+reliable+sms+integration.%0A%0ACheck+it+out:+https://textbee.dev%0A%0ABest+regards!",
+      url: 'mailto:?subject=Check+out+Gabay+SMS&body=Hi!%0A%0AI+wanted+to+share+Gabay+SMS+with+you+-+a+simple+SMS+gateway+for+school+notifications.%0A%0ACheck+it+out:+https://sms.gabay.online%0A%0ABest+regards!',
     },
   ]
   const [currentUrl, setCurrentUrl] = useState(socials[0].url)
@@ -97,7 +97,7 @@ export default function CommunityLinks() {
 
         {/* <Card>
         <CardHeader>
-          <CardTitle>Support on Patreon</CardTitle>
+          <CardTitle>Gabay Online</CardTitle>
         </CardHeader>
         <CardContent>
           <p className='text-sm text-muted-foreground mb-4'>
@@ -114,11 +114,11 @@ export default function CommunityLinks() {
 
         <Card>
           <CardHeader>
-            <CardTitle>GitHub</CardTitle>
+            <CardTitle>Source</CardTitle>
           </CardHeader>
           <CardContent>
             <p className='text-sm text-muted-foreground mb-4'>
-              Check out our source code and contribute to the project.
+              Review the upstream source this Gabay SMS fork is based on.
             </p>
             <Link href={ExternalLinks.github} prefetch={false} target='_blank'>
               <Button className='w-full'>
@@ -131,16 +131,16 @@ export default function CommunityLinks() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Discord</CardTitle>
+            <CardTitle>Support</CardTitle>
           </CardHeader>
           <CardContent>
             <p className='text-sm text-muted-foreground mb-4'>
-              Join our community for support and updates.
+              Contact Gabay support for help and updates.
             </p>
             <Link href={ExternalLinks.discord} prefetch={false} target='_blank'>
               <Button className='w-full' variant='outline'>
                 <MessageSquare className='mr-2 h-4 w-4' />
-                Join Discord
+                Contact Support
               </Button>
             </Link>
           </CardContent>
@@ -148,11 +148,11 @@ export default function CommunityLinks() {
 
         <Card>
           <CardHeader>
-            <CardTitle>X (Twitter)</CardTitle>
+            <CardTitle>Gabay Online</CardTitle>
           </CardHeader>
           <CardContent>
             <p className='text-sm text-muted-foreground mb-4'>
-              Follow us on X for the latest updates and announcements.
+              Visit Gabay online for platform updates and announcements.
             </p>
             <Link href={ExternalLinks.twitter} prefetch={false} target='_blank'>
               <Button className='w-full' variant='outline'>
@@ -165,11 +165,11 @@ export default function CommunityLinks() {
 
         <Card>
           <CardHeader>
-            <CardTitle>LinkedIn</CardTitle>
+            <CardTitle>Gabay Online</CardTitle>
           </CardHeader>
           <CardContent>
             <p className='text-sm text-muted-foreground mb-4'>
-              Connect with us on LinkedIn for updates and news.
+              Connect with us on Gabay Online for updates and news.
             </p>
             <Link
               href={ExternalLinks.linkedin}
@@ -178,7 +178,7 @@ export default function CommunityLinks() {
             >
               <Button className='w-full' variant='outline'>
                 <Linkedin className='mr-2 h-4 w-4' />
-                Connect on LinkedIn
+                Connect on Gabay Online
               </Button>
             </Link>
           </CardContent>
@@ -189,7 +189,7 @@ export default function CommunityLinks() {
           </CardHeader>
           <CardContent>
             <p className='text-sm text-muted-foreground mb-4'>
-              Help others discover textbee.dev by sharing it with your network.
+              Help others discover Gabay SMS by sharing it with your network.
             </p>
 
             <Button
@@ -197,7 +197,7 @@ export default function CommunityLinks() {
               className='w-full'
               onClick={() => setSocialOpen(true)}
             >
-              <Share2 className='mr-2 h-4 w-4' /> Share textbee.dev
+              <Share2 className='mr-2 h-4 w-4' /> Share Gabay SMS
             </Button>
           </CardContent>
         </Card>
@@ -206,10 +206,10 @@ export default function CommunityLinks() {
         <DialogContent className='sm:max-w-[600px] min-w-[500px] text-base'>
           <DialogHeader>
             <DialogTitle className='text-primary mb-2 text-2xl font-bold'>
-              Share textbee.dev with Others
+              Share Gabay SMS with others
             </DialogTitle>
             <p className='text-muted-foreground'>
-              Help us grow by sharing textbee.dev with your friends and
+              Help us grow by sharing Gabay SMS with your friends and
               colleagues!
             </p>
           </DialogHeader>

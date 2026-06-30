@@ -132,7 +132,7 @@ export const SurveyModal = () => {
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogContent className='sm:max-w-4xl max-h-[90vh] overflow-hidden flex flex-col'>
         <DialogHeader>
-          <DialogTitle>Help us improve textbee</DialogTitle>
+          <DialogTitle>Help us improve Gabay SMS</DialogTitle>
         </DialogHeader>
 
         <div className='flex-1 min-h-0'>
@@ -148,7 +148,7 @@ export const SurveyModal = () => {
                 marginHeight={0}
                 marginWidth={0}
                 className='rounded-lg'
-                title='textbee.dev feedback survey'
+                title='Gabay SMS feedback survey'
               >
                 Loading...
               </iframe>
@@ -169,7 +169,7 @@ export const SurveyModal = () => {
             size='sm'
             onClick={() => {
               const iframe = document.querySelector(
-                'iframe[title="textbee.dev feedback survey"]'
+                'iframe[title="Gabay SMS feedback survey"]'
               ) as HTMLIFrameElement
               if (iframe) {
                 iframe.focus()

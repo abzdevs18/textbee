@@ -37,8 +37,8 @@ async function bootstrap() {
   })
 
   const config = new DocumentBuilder()
-    .setTitle('TextBee API Docs')
-    .setDescription('TextBee - Android SMS Gateway API Docs')
+    .setTitle('Gabay SMS API Docs')
+    .setDescription('Gabay SMS - Android SMS Gateway API Docs')
     .setVersion('1.0')
     .addBearerAuth()
     .addApiKey({

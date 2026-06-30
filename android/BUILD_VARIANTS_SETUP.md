@@ -12,9 +12,9 @@ The app now supports two build variants:
 
 | Feature | Dev | Prod |
 |---------|-----|------|
-| Package Name | `com.vernu.sms.dev` | `com.vernu.sms` |
-| App Name | "SMS Gateway (Dev)" | "SMS Gateway" |
-| API Base URL | `https://api-dev.textbee.dev/api/v1/` | `https://api.textbee.dev/api/v1/` |
+| Package Name | `online.gabay.sms.dev` | `online.gabay.sms` |
+| App Name | "Gabay SMS (Dev)" | "Gabay SMS" |
+| API Base URL | `https://sms.gabay.online/api/v1/` | `https://sms.gabay.online/api/v1/` |
 | Firebase Config | `app/src/dev/google-services.json` | `app/src/prod/google-services.json` |
 | Version Suffix | `-dev` appended | No suffix |
 
@@ -29,26 +29,26 @@ The app now supports two build variants:
 #### For Development:
 - Create a new Firebase project for development
 - Download the `google-services.json` for your dev project
-- **Important**: Make sure the package name in Firebase is set to `com.vernu.sms.dev`
+- **Important**: Make sure the package name in Firebase is set to `online.gabay.sms.dev`
 - Replace the template file at `app/src/dev/google-services.json` with your actual dev configuration
 
 ### 2. API Configuration
 
 The API base URLs are now configured via build variants:
-- **Dev**: `https://api-dev.textbee.dev/api/v1/`
-- **Prod**: `https://api.textbee.dev/api/v1/`
+- **Dev**: `https://sms.gabay.online/api/v1/`
+- **Prod**: `https://sms.gabay.online/api/v1/`
 
 To change the dev API URL, edit the `buildConfigField` in `app/build.gradle`:
 ```gradle
 dev {
-    buildConfigField "String", "API_BASE_URL", '"https://api-dev.textbee.dev/api/v1/"'
+    buildConfigField "String", "API_BASE_URL", '"https://sms.gabay.online/api/v1/"'
 }
 ```
 
 ## Building the App
 
 ### Using Android Studio:
-1. Open the "Build Variants" panel (View → Tool Windows → Build Variants)
+1. Open the "Build Variants" panel (View > Tool Windows > Build Variants)
 2. Select the desired variant:
    - `devDebug` - Development build for debugging
    - `devRelease` - Development release build
@@ -73,8 +73,8 @@ dev {
 ## Installation
 
 Both variants can be installed simultaneously on the same device since they have different package names:
-- Dev app will show as "SMS Gateway (Dev)"
-- Prod app will show as "SMS Gateway"
+- Dev app will show as "Gabay SMS (Dev)"
+- Prod app will show as "Gabay SMS"
 
 ## Environment Detection
 
@@ -103,5 +103,5 @@ if (BuildConfig.ENVIRONMENT.equals("development")) {
 - Verify API URLs are accessible
 
 ### Firebase Issues:
-- Confirm the package name in Firebase matches the variant (`com.vernu.sms.dev` for dev)
-- Ensure SHA-1 fingerprints are added to Firebase if using authentication 
+- Confirm the package name in Firebase matches the variant (`online.gabay.sms.dev` for dev)
+- Ensure SHA-1 fingerprints are added to Firebase if using authentication

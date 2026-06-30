@@ -35,7 +35,7 @@ export default function ApiGuide() {
           language: 'javascript',
           code: `import axios from 'axios'
 
-const BASE_URL = 'https://api.textbee.dev/api/v1'
+const BASE_URL = 'https://sms.gabay.online/api/v1'
 const API_KEY = 'YOUR_API_KEY'
 const DEVICE_ID = 'YOUR_DEVICE_ID'
 
@@ -43,7 +43,7 @@ const response = await axios.post(
   \`\${BASE_URL}/gateway/devices/\${DEVICE_ID}/send-sms\`,
   {
     recipients: [ '+1234567890' ],
-    message: 'Hello from TextBee!'
+    message: 'Hello from Gabay SMS!'
   },
   { headers: { 'x-api-key': API_KEY } }
 )
@@ -54,7 +54,7 @@ console.log(response.data)`
           language: 'python',
           code: `import requests
 
-BASE_URL = 'https://api.textbee.dev/api/v1'
+BASE_URL = 'https://sms.gabay.online/api/v1'
 API_KEY = 'YOUR_API_KEY'
 DEVICE_ID = 'YOUR_DEVICE_ID'
 
@@ -62,7 +62,7 @@ response = requests.post(
   f'{BASE_URL}/gateway/devices/{DEVICE_ID}/send-sms',
   json={
     'recipients': ['+1234567890'],
-    'message': 'Hello from TextBee!'
+    'message': 'Hello from Gabay SMS!'
   },
   headers={'x-api-key': API_KEY}
 )
@@ -71,12 +71,12 @@ print(response.json())`
         },
         curl: {
           language: 'bash',
-          code: `curl -X POST "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/send-sms" \\
+          code: `curl -X POST "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/send-sms" \\
   -H 'x-api-key: YOUR_API_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '{
     "recipients": [ "+1234567890" ],
-    "message": "Hello from TextBee!"
+    "message": "Hello from Gabay SMS!"
   }'`
         }
       },
@@ -85,7 +85,7 @@ print(response.json())`
         code: `{
   "data": {
     "_id": "sms_1234567890",
-    "message": "Hello from TextBee!",
+    "message": "Hello from Gabay SMS!",
     "recipients": ["+1234567890"],
     "status": "PENDING",
     "createdAt": "2023-09-15T14:23:45Z"
@@ -104,7 +104,7 @@ print(response.json())`
           language: 'javascript',
           code: `import axios from 'axios'
 
-const BASE_URL = 'https://api.textbee.dev/api/v1'
+const BASE_URL = 'https://sms.gabay.online/api/v1'
 const API_KEY = 'YOUR_API_KEY'
 const DEVICE_ID = 'YOUR_DEVICE_ID'
 const SMS_ID = 'YOUR_SMS_ID'
@@ -120,7 +120,7 @@ console.log(response.data)`
           language: 'python',
           code: `import requests
 
-BASE_URL = 'https://api.textbee.dev/api/v1'
+BASE_URL = 'https://sms.gabay.online/api/v1'
 API_KEY = 'YOUR_API_KEY'
 DEVICE_ID = 'YOUR_DEVICE_ID'
 SMS_ID = 'YOUR_SMS_ID'
@@ -134,7 +134,7 @@ print(response.json())`
         },
         curl: {
           language: 'bash',
-          code: `curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/sms/YOUR_SMS_ID" \\
+          code: `curl -X GET "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/sms/YOUR_SMS_ID" \\
   -H 'x-api-key: YOUR_API_KEY'`
         }
       },
@@ -143,7 +143,7 @@ print(response.json())`
         code: `{
   "data": {
     "_id": "sms_1234567890",
-    "message": "Hello from TextBee!",
+    "message": "Hello from Gabay SMS!",
     "recipient": "+1234567890",
     "status": "DELIVERED",
     "sentAt": "2023-09-15T14:23:45Z",
@@ -163,7 +163,7 @@ print(response.json())`
           language: 'javascript',
           code: `import axios from 'axios'
 
-const BASE_URL = 'https://api.textbee.dev/api/v1'
+const BASE_URL = 'https://sms.gabay.online/api/v1'
 const API_KEY = 'YOUR_API_KEY'
 const DEVICE_ID = 'YOUR_DEVICE_ID'
 const BATCH_ID = 'YOUR_BATCH_ID'
@@ -179,7 +179,7 @@ console.log(response.data)`
           language: 'python',
           code: `import requests
 
-BASE_URL = 'https://api.textbee.dev/api/v1'
+BASE_URL = 'https://sms.gabay.online/api/v1'
 API_KEY = 'YOUR_API_KEY'
 DEVICE_ID = 'YOUR_DEVICE_ID'
 BATCH_ID = 'YOUR_BATCH_ID'
@@ -193,7 +193,7 @@ print(response.json())`
         },
         curl: {
           language: 'bash',
-          code: `curl -X GET "https://api.textbee.dev/api/v1/gateway/devices/YOUR_DEVICE_ID/sms-batch/YOUR_BATCH_ID" \\
+          code: `curl -X GET "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/sms-batch/YOUR_BATCH_ID" \\
   -H 'x-api-key: YOUR_API_KEY'`
         }
       },
@@ -209,7 +209,7 @@ print(response.json())`
       {
         "_id": "sms_1234567890",
         "recipient": "+1234567890",
-        "message": "Hello from TextBee!",
+        "message": "Hello from Gabay SMS!",
         "status": "DELIVERED",
         "sentAt": "2023-09-15T14:23:45Z",
         "deliveredAt": "2023-09-15T14:23:48Z",
@@ -217,14 +217,14 @@ print(response.json())`
       {
         "_id": "sms_0987654321",
         "recipient": "+0987654321",
-        "message": "Hello from TextBee!",
+        "message": "Hello from Gabay SMS!",
         "status": "SENT",
         "sentAt": "2023-09-15T14:23:45Z",
         "deliveredAt": null
       },{
         "_id": "sms_0987654321",
         "recipient": "+0987654321",
-        "message": "Hello from TextBee!",
+        "message": "Hello from Gabay SMS!",
         "status": "FAILED",
         "sentAt": null,
         "deliveredAt": null,
@@ -258,7 +258,7 @@ print(response.json())`
         <CollapsibleContent className="mt-4">
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-muted-foreground">Integrate SMS capabilities into your applications</p>
-            <Link href="https://api.textbee.dev/" target="_blank">
+            <Link href="https://sms.gabay.online/api/" target="_blank">
               <Button variant="outline" size="sm" className="flex items-center gap-1">
                 <ExternalLink className="h-4 w-4" />
                 <span>Full API Docs</span>
@@ -402,7 +402,7 @@ print(response.json())`
                     <p className="text-sm text-muted-foreground">
                       For more details, see the full API documentation.
                     </p>
-                    <Link href={`https://api.textbee.dev/#${endpoint.id}`} target="_blank">
+                    <Link href={`https://sms.gabay.online/api/#${endpoint.id}`} target="_blank">
                       <Button size="sm" variant="outline">
                         View Details
                         <ArrowRight className="ml-2 h-4 w-4" />

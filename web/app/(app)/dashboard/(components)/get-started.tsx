@@ -71,7 +71,7 @@ const STEPS: StepDef[] = [
   {
     id: 'download_app',
     label: 'Download the Android app',
-    description: 'Install TextBee on your Android device.',
+    description: 'Install Gabay SMS on your Android device.',
     optional: true,
     checkDone: (_u, stats, _s, skipped) =>
       (stats?.totalDeviceCount ?? 0) > 0 || skipped.includes('download_app'),
@@ -549,7 +549,7 @@ export default function GetStartedCard() {
                                         asChild
                                       >
                                         <a
-                                          href={`${Routes.landingPage}/pricing`}
+                                          href='/checkout/pro'
                                           target='_blank'
                                           rel='noreferrer'
                                         >
@@ -613,7 +613,7 @@ export default function GetStartedCard() {
               Generate an API key in the step above (if you have not already).
             </li>
             <li>
-              Download the TextBee Android app from{' '}
+              Download the Gabay SMS Android app from{' '}
               <a
                 href={Routes.downloadAndroidApp}
                 target='_blank'

@@ -13,7 +13,7 @@ export default function SupportHQWidget() {
         // @ts-ignore
         script.onload = () => window.SupportHQWidget?.init({
           projectId: process.env.NEXT_PUBLIC_SUPPORT_HQ_PROJECT_ID,
-          themeColor: process.env.NEXT_PUBLIC_SUPPORT_HQ_THEME_COLOR ?? '#2563eb',
+          themeColor: process.env.NEXT_PUBLIC_SUPPORT_HQ_THEME_COLOR ?? '#3d8216',
           ...(session?.user && {
             metadata: {
               userId: session.user.id || '',

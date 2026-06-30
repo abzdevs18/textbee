@@ -135,7 +135,7 @@ export function ContributeModal() {
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <DialogContent className='max-w-md max-h-[90vh] overflow-y-auto flex flex-col'>
           <DialogHeader>
-            <DialogTitle>Support textbee.dev</DialogTitle>
+            <DialogTitle>Support Gabay SMS</DialogTitle>
             <DialogDescription>
               Your contribution helps keep this project alive and growing.
             </DialogDescription>
@@ -154,13 +154,13 @@ export function ContributeModal() {
                   <Button className='w-full' asChild>
                     <Link href={ExternalLinks.patreon} target='_blank'>
                       <Heart className='mr-2 h-4 w-4' />
-                      Monthly Support on Patreon
+                      Gabay Online
                     </Link>
                   </Button>
                   <Button variant='outline' className='w-full' asChild>
                     <Link href={ExternalLinks.polar} target='_blank'>
                       <Star className='mr-2 h-4 w-4' />
-                      One-time Donation via Polar.sh
+                      Customer portal
                     </Link>
                   </Button>
                   <Button
@@ -169,7 +169,7 @@ export function ContributeModal() {
                     onClick={() => setCryptoOpen(true)}
                   >
                     <Coins className='mr-2 h-4 w-4' />
-                    Donate Cryptocurrency
+                    View saved addresses
                   </Button>
                 </div>
               </CardContent>
@@ -186,7 +186,7 @@ export function ContributeModal() {
                   <Button asChild>
                     <Link href={ExternalLinks.github} target='_blank'>
                       <Star className='mr-2 h-4 w-4' />
-                      Star on GitHub
+                      View upstream
                     </Link>
                   </Button>
                   <Button variant='outline' asChild>
@@ -217,7 +217,7 @@ export function ContributeModal() {
       <Dialog open={cryptoOpen} onOpenChange={setCryptoOpen}>
         <DialogContent className='sm:max-w-[425px]'>
           <DialogHeader>
-            <DialogTitle>Donate Cryptocurrency</DialogTitle>
+            <DialogTitle>View saved addresses</DialogTitle>
           </DialogHeader>
           <div className='grid gap-2'>
             {CRYPTO_ADDRESSES.map((wallet, index) => (

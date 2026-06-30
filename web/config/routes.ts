@@ -1,8 +1,8 @@
 export const Routes = {
-  landingPage: 'https://textbee.dev',
+  landingPage: process.env.NEXT_PUBLIC_SITE_URL || 'https://sms.gabay.online',
   contribute: '/contribute',
-  useCases: 'https://textbee.dev/use-cases',
-  quickstart: 'https://textbee.dev/quickstart',
+  useCases: 'https://gabay.online',
+  quickstart: '/dashboard/messaging',
   login: '/login',
   register: '/register',
   logout: '/logout',
@@ -11,9 +11,9 @@ export const Routes = {
 
   dashboard: '/dashboard',
 
-  downloadAndroidApp: 'https://textbee.dev/download',
-  privacyPolicy: 'https://textbee.dev/privacy-policy',
-  refundPolicy: 'https://textbee.dev/refund-policy',
-  termsOfService: 'https://textbee.dev/terms-of-service',
-  statusPage: 'https://status.textbee.dev',
+  downloadAndroidApp: '/download',
+  privacyPolicy: 'https://gabay.online/pages/privacy-policy',
+  refundPolicy: 'https://gabay.online',
+  termsOfService: 'https://gabay.online/pages/terms-of-service',
+  statusPage: 'https://sms.gabay.online/status',
 }

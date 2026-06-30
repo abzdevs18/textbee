@@ -10,14 +10,14 @@ export default function Footer() {
       <div className='container mx-auto px-4 sm:px-6 lg:px-8 max-w-7xl flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row'>
         <div className='flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0'>
           <Image
-            src='/images/logo.png'
-            alt='textbee Logo'
-            width={24}
-            height={24}
-            className='h-6 w-6 bg-white rounded-full'
+            src='/images/gabay-logo.png'
+            alt='Gabay SMS Logo'
+            width={28}
+            height={28}
+            className='h-7 w-7 rounded-full bg-[#3d8216] p-0.5'
           />
           <p className='text-center text-sm leading-loose md:text-left'>
-            © {new Date().getFullYear()} All rights reserved
+            © {new Date().getFullYear()} Gabay SMS. All rights reserved
           </p>
         </div>
         <nav className='flex gap-4 sm:gap-6 flex-col md:flex-row items-center'>
@@ -44,7 +44,7 @@ export default function Footer() {
             href={Routes.contribute}
             target='_blank'
           >
-            Contribute
+            Support
           </Link>
           <Link
             className='text-sm font-medium group flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-50 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/30 transition-colors'

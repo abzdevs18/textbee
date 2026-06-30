@@ -1,11 +1,13 @@
 /** @type {import('next').NextConfig} */
+const standaloneOutput = process.env.NEXT_OUTPUT_MODE !== 'default'
+
 const nextConfig = {
   reactStrictMode: true,
   i18n: {
     locales: ['en-US'],
     defaultLocale: 'en-US',
   },
-  output: 'standalone',
+  ...(standaloneOutput ? { output: 'standalone' } : {}),
 
   async redirects() {
     return [
@@ -16,13 +18,11 @@ const nextConfig = {
       },
       {
         source: '/android',
-        destination: 'https://dl.textbee.dev',
+        destination: '/download',
         permanent: false,
       },
     ]
   },
 }
 
-
-
-module.exports = nextConfig;
+module.exports = nextConfig

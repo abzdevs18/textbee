@@ -70,7 +70,7 @@ private fun SplashContent() {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "textbee",
+                text = "Gabay SMS",
                 style = MaterialTheme.typography.headlineLarge,
                 color = Color.White,
                 fontWeight = FontWeight.Bold

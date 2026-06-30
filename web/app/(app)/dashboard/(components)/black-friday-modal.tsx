@@ -18,8 +18,8 @@ import { Badge } from '@/components/ui/badge'
 import { Copy, Check } from 'lucide-react'
 
 const STORAGE_KEYS = {
-    DISMISSED: 'black_friday_modal_dismissed',
-    LAST_SHOWN: 'black_friday_modal_last_shown',
+    DISMISSED: 'gabay_launch_offer_modal_dismissed',
+    LAST_SHOWN: 'gabay_launch_offer_modal_last_shown',
 }
 
 const SHOW_INTERVAL = 6 * 60 * 60 * 1000 // 6 hours
@@ -72,16 +72,16 @@ export default function BlackFridayModal() {
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && handleRemindLater()}>
-            <DialogContent className="sm:max-w-xl border-2 border-purple-500/20 shadow-2xl shadow-purple-500/10">
+            <DialogContent className="sm:max-w-xl border-2 border-brand-500/20 shadow-2xl shadow-brand-500/10">
                 <DialogHeader>
-                    <div className="mx-auto bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-2 animate-pulse">
+                    <div className="mx-auto bg-gradient-to-r from-brand-600 to-brand-700 text-white text-xs font-bold px-3 py-1 rounded-full mb-2">
                         LIMITED TIME OFFER
                     </div>
                     <DialogTitle className="text-2xl font-bold text-center flex items-center justify-center gap-2">
-                        🔥 Black Friday Sale
+                        Gabay SMS Launch Offer
                     </DialogTitle>
                     <DialogDescription className="text-center text-base">
-                        Upgrade to Pro and unlock the full potential of textbee.
+                        Upgrade to Pro and unlock the full potential of Gabay SMS.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -116,14 +116,14 @@ export default function BlackFridayModal() {
                                 <Badge variant="secondary" className="bg-black text-white hover:bg-black/90">40% OFF</Badge>
                             </div>
                             <div className="flex items-center gap-2 bg-background p-2 rounded border border-dashed border-primary/50">
-                                <code className="flex-1 font-mono font-bold text-center text-primary text-sm">BLACKFRIDAY40</code>
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => copyCode('BLACKFRIDAY40')}>
-                                    {copiedCode === 'BLACKFRIDAY40' ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                                <code className="flex-1 font-mono font-bold text-center text-primary text-sm">GABAYLAUNCH40</code>
+                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => copyCode('GABAYLAUNCH40')}>
+                                    {copiedCode === 'GABAYLAUNCH40' ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                                 </Button>
                             </div>
                         </div>
 
-                        <div className="relative bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-950/20 dark:to-pink-950/20 p-4 rounded-lg space-y-3 border border-purple-200 dark:border-purple-800 flex flex-col justify-between">
+                        <div className="relative bg-gradient-to-br from-brand-50 to-emerald-50 dark:from-brand-950/20 dark:to-emerald-950/20 p-4 rounded-lg space-y-3 border border-brand-200 dark:border-brand-800 flex flex-col justify-between">
                             <div className="absolute -top-3 right-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm">
                                 BEST VALUE
                             </div>
@@ -138,9 +138,9 @@ export default function BlackFridayModal() {
                                 <Badge variant="secondary" className="bg-black text-white hover:bg-black/90">50% OFF</Badge>
                             </div>
                             <div className="flex items-center gap-2 bg-background p-2 rounded border border-dashed border-primary/50">
-                                <code className="flex-1 font-mono font-bold text-center text-primary text-sm">BLACKFRIDAY50</code>
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => copyCode('BLACKFRIDAY50')}>
-                                    {copiedCode === 'BLACKFRIDAY50' ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                                <code className="flex-1 font-mono font-bold text-center text-primary text-sm">GABAYLAUNCH50</code>
+                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => copyCode('GABAYLAUNCH50')}>
+                                    {copiedCode === 'GABAYLAUNCH50' ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                                 </Button>
                             </div>
                         </div>
@@ -152,7 +152,7 @@ export default function BlackFridayModal() {
                 </div>
 
                 <DialogFooter className="flex-col sm:flex-col gap-2">
-                    <Button className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold h-11 shadow-lg shadow-purple-500/20" asChild>
+                    <Button className="w-full bg-gradient-to-r from-brand-600 to-brand-700 hover:from-brand-700 hover:to-brand-800 text-white font-bold h-11 shadow-lg shadow-brand-500/20" asChild>
                         <Link href="/checkout/pro">
                             Claim Offer Now
                         </Link>

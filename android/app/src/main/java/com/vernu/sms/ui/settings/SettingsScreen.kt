@@ -79,7 +79,7 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Default.Fingerprint,
                 title = "Device ID",
-                subtitle = state.deviceId.ifEmpty { "—" },
+                subtitle = state.deviceId.ifEmpty { "Not set" },
                 subtitleFont = FontFamily.Monospace,
                 trailing = {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(state.deviceId)) }) {
@@ -91,7 +91,7 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Default.Key,
                 title = "API Key",
-                subtitle = if (state.apiKey.isEmpty()) "—" else "••••••••" + state.apiKey.takeLast(4),
+                subtitle = if (state.apiKey.isEmpty()) "Not set" else "********" + state.apiKey.takeLast(4),
                 trailing = {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(state.apiKey)) }) {
                         Icon(Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(18.dp))
@@ -204,7 +204,7 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Default.AutoAwesome,
                 title = "About",
-                subtitle = "textbee.dev",
+                subtitle = "sms.gabay.online",
                 onClick = { showAboutDialog = true },
                 trailing = {
                     Icon(Icons.Default.ChevronRight, contentDescription = null,
@@ -217,7 +217,7 @@ fun SettingsScreen(
                 title = "Check for Updates",
                 onClick = {
                     val versionInfo = "${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})"
-                    val url = "https://textbee.dev/download?currentVersion=${Uri.encode(versionInfo)}"
+                    val url = "https://sms.gabay.online/download?currentVersion=${Uri.encode(versionInfo)}"
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 },
                 trailing = {
@@ -232,7 +232,7 @@ fun SettingsScreen(
                 icon = Icons.Default.SupportAgent,
                 title = "Get Support",
                 onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://app.textbee.dev/dashboard/account/get-support")))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard/account/get-support")))
                 },
                 trailing = {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null,
@@ -242,20 +242,20 @@ fun SettingsScreen(
 
             SettingsRow(
                 icon = Icons.Default.Share,
-                title = "Share textbee",
+                title = "Share Gabay SMS",
                 subtitle = "Help spread the word",
                 onClick = {
-                    val shareText = "i've been using textbee.dev to send SMS via API from my own phone, " +
+                    val shareText = "I've been using Gabay SMS to send SMS via API from my own phone, " +
                         "no Twilio or paid services needed. works great for automations, alerts, " +
                         "notifications, or anything that needs programmatic SMS. open source and free to start\n\n" +
-                        "https://textbee.dev"
+                        "https://sms.gabay.online"
                     context.startActivity(
                         Intent.createChooser(
                             Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, shareText)
                             },
-                            "Share TextBee"
+                            "Share Gabay SMS"
                         )
                     )
                 }
@@ -267,7 +267,7 @@ fun SettingsScreen(
                 icon = Icons.Default.Gavel,
                 title = "Terms of Service",
                 onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev/terms-of-service")))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://gabay.online/pages/terms-of-service")))
                 },
                 trailing = {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null,
@@ -279,7 +279,7 @@ fun SettingsScreen(
                 icon = Icons.Default.Policy,
                 title = "Privacy Policy",
                 onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev/privacy-policy")))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://gabay.online/pages/privacy-policy")))
                 },
                 trailing = {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null,
@@ -335,7 +335,7 @@ fun SettingsScreen(
             text = {
                 Column {
                     Text(
-                        "Delay between each SMS in seconds (0–3600)",
+                        "Delay between each SMS in seconds (0-3600)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -382,7 +382,7 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
             title = {
-                Text("textbee.dev", fontWeight = FontWeight.Bold)
+                Text("Gabay SMS", fontWeight = FontWeight.Bold)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -395,17 +395,17 @@ fun SettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://textbee.dev")))
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online")))
                             }
                         ) {
-                            Text("textbee.dev")
+                            Text("sms.gabay.online")
                         }
                         OutlinedButton(
                             onClick = {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/vernu/textbee")))
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://gabay.online")))
                             }
                         ) {
-                            Text("GitHub")
+                            Text("Gabay")
                         }
                     }
                 }

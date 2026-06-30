@@ -41,7 +41,7 @@ export default function UpgradeToProAlert() {
     if (monthlyUsagePercentage >= 100 ) {
       return {
         bgColor: 'bg-gradient-to-r from-red-600 to-red-800',
-        message: "⚠️ Monthly limit exceeded! Your requests will be rejected until you upgrade.",
+        message: "Monthly limit exceeded! Your requests will be rejected until you upgrade.",
         subMessage: `You've used ${processedSmsLastMonth} of ${monthlyLimit} SMS this month.`,
         buttonText: "Upgrade Now!",
         buttonColor: 'bg-white text-red-600 hover:bg-red-50 hover:text-red-700 border-red-600',
@@ -50,7 +50,7 @@ export default function UpgradeToProAlert() {
     } else if (monthlyUsagePercentage >= 80) {
       return {
         bgColor: 'bg-gradient-to-r from-orange-500 to-red-500',
-        message: "⚠️ Approaching limit! Upgrade to Pro to avoid service interruption.",
+        message: "Approaching limit! Upgrade to Pro to avoid service interruption.",
         subMessage: `You've used ${monthlyUsagePercentage}% of your monthly SMS limit (${processedSmsLastMonth}/${monthlyLimit}).`,
         buttonText: "Upgrade Before Limit!",
         buttonColor: 'bg-white text-orange-600 hover:bg-orange-50 hover:text-orange-700 border-orange-600',
@@ -100,11 +100,11 @@ export default function UpgradeToProAlert() {
         : "Unlock premium features, priority support, and advanced capabilities with Pro!"
       
       return {
-        bgColor: 'bg-gradient-to-r from-purple-500 to-pink-500',
+        bgColor: 'bg-gradient-to-r from-brand-500 to-brand-700',
         message: ctaMessages[randomIndex],
         subMessage,
         buttonText: buttonTexts[randomIndex],
-        buttonColor: 'bg-red-500 text-white hover:bg-red-600 border-red-500',
+        buttonColor: 'bg-white text-brand-700 hover:bg-brand-50 border-brand-600',
         urgency: 'normal'
       }
     }
@@ -127,14 +127,14 @@ export default function UpgradeToProAlert() {
       monthlyUsagePercentage >= 100
         ? {
             bgColor: 'bg-gradient-to-r from-red-600 to-red-800',
-            message: '⚠️ Monthly limit exceeded! Upgrade to Scale for 25,000 SMS/mo.',
+            message: 'Monthly limit exceeded! Upgrade to Scale for 25,000 SMS/mo.',
             subMessage: `You've used ${processedSmsLastMonth} of ${monthlyLimit} SMS this month.`,
             buttonText: 'Upgrade to Scale!',
             buttonColor: 'bg-white text-red-600 hover:bg-red-50 hover:text-red-700 border-red-600',
           }
         : {
             bgColor: 'bg-gradient-to-r from-orange-500 to-red-500',
-            message: '⚠️ Approaching Pro limit! Scale up to 25,000 SMS/mo.',
+            message: 'Approaching Pro limit! Scale up to 25,000 SMS/mo.',
             subMessage: `You've used ${monthlyUsagePercentage}% of your monthly SMS limit (${processedSmsLastMonth}/${monthlyLimit}).`,
             buttonText: 'Upgrade to Scale',
             buttonColor: 'bg-white text-orange-600 hover:bg-orange-50 hover:text-orange-700 border-orange-600',
@@ -166,7 +166,7 @@ export default function UpgradeToProAlert() {
               asChild
               className='bg-orange-500 text-white hover:bg-orange-600 text-xs md:text-sm'
             >
-              <Link href={'/#pricing'}>Learn More</Link>
+              <Link href={'/checkout/scale'}>Learn More</Link>
             </Button>
           </div>
         </AlertDescription>
@@ -203,7 +203,7 @@ export default function UpgradeToProAlert() {
               asChild
               className='bg-orange-500 text-white hover:bg-orange-600 text-xs md:text-sm'
             >
-              <Link href={'/#pricing'}>Learn More</Link>
+              <Link href={'/checkout/pro'}>Learn More</Link>
             </Button>
           )}
         </div>

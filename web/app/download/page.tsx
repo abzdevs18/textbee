@@ -42,16 +42,25 @@ interface Release {
   }>
   prerelease: boolean
 }
+
+const RELEASES_API_URL = process.env.NEXT_PUBLIC_ANDROID_RELEASES_API_URL
+const RELEASES_PAGE_URL =
+  process.env.NEXT_PUBLIC_ANDROID_RELEASES_PAGE_URL || 'https://sms.gabay.online/download'
+
 export default function DownloadPage() {
   const [releases, setReleases] = useState<Release[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     async function fetchReleases() {
+      if (!RELEASES_API_URL) {
+        setError('Android release feed is not configured yet.')
+        setLoading(false)
+        return
+      }
+
       try {
-        const response = await fetch(
-          'https://api.github.com/repos/vernu/textbee/releases'
-        )
+        const response = await fetch(RELEASES_API_URL)
         if (!response.ok) {
           throw new Error('Failed to fetch releases')
         }
@@ -135,13 +144,13 @@ export default function DownloadPage() {
       <div className='container mx-auto max-w-5xl'>
         <div className='text-center mb-12'>
           <div className='inline-flex items-center rounded-full border px-3 py-1 text-sm bg-brand-50 dark:bg-brand-950 border-brand-200 dark:border-brand-800 text-brand-700 dark:text-brand-300 mb-4'>
-            <Download className='h-3.5 w-3.5 mr-2' /> Download TextBee
+            <Download className='h-3.5 w-3.5 mr-2' /> Download Gabay SMS
           </div>
           <h1 className='text-4xl font-bold tracking-tight text-gray-900 dark:text-white'>
-            Download TextBee App
+            Download Gabay SMS App
           </h1>
           <p className='mt-4 text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto'>
-            Transform your Android device into a powerful SMS gateway with our
+            Transform your Android device into a Gabay SMS gateway with our
             easy-to-use application.
           </p>
         </div>
@@ -170,11 +179,11 @@ export default function DownloadPage() {
                     <Skeleton className='h-8 w-48' />
                   ) : error ? (
                     <h2 className='text-2xl font-bold text-gray-900 dark:text-white'>
-                      TextBee App
+                      Gabay SMS App
                     </h2>
                   ) : (
                     <h2 className='text-2xl font-bold text-gray-900 dark:text-white'>
-                      {latestRelease?.name || 'TextBee App'}
+                      {latestRelease?.name || 'Gabay SMS App'}
                     </h2>
                   )}
                 </div>
@@ -287,7 +296,7 @@ export default function DownloadPage() {
                           rel='noopener noreferrer'
                         >
                           <Github className='mr-2 h-4 w-4' />
-                          View on GitHub
+                          View release source
                         </Link>
                       </Button>
                       <div className='text-sm text-gray-500 dark:text-gray-400'>
@@ -318,12 +327,12 @@ export default function DownloadPage() {
               className='text-gray-600 dark:text-gray-400'
             >
               <Link
-                href='https://github.com/vernu/textbee/releases'
+                href={RELEASES_PAGE_URL}
                 target='_blank'
                 rel='noopener noreferrer'
               >
                 <ExternalLink className='mr-2 h-4 w-4' />
-                View All on GitHub
+                View release source
               </Link>
             </Button>
           </div>

@@ -60,7 +60,7 @@ export default function CheckoutPage({ params }) {
         if (retries > 0) {
           initiateCheckout(retries - 1)
         } else {
-          setError(error.response?.data?.message || 'Failed to create checkout session. Please try again or contact billing@textbee.dev.')
+          setError(error.response?.data?.message || 'Failed to create checkout session. Please try again or contact billing@gabay.online.')
           console.error(error.response?.data?.message)
         }
       }
@@ -81,7 +81,7 @@ export default function CheckoutPage({ params }) {
       setPlanChange(null)
       setError(
         error.response?.data?.message ||
-          'Failed to change your plan. Please try again or contact billing@textbee.dev.',
+          'Failed to change your plan. Please try again or contact billing@gabay.online.',
       )
       console.error(error.response?.data?.message)
       setIsConfirming(false)

@@ -9,9 +9,9 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 
 export const metadata: Metadata = {
-  title: 'textbee.dev - sms gateway - dashboard',
+  title: 'Gabay SMS - SMS Gateway Dashboard',
 
-  metadataBase: new URL('https://textbee.dev'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://sms.gabay.online'),
 }
 
 export default async function RootLayout({ children }: PropsWithChildren) {

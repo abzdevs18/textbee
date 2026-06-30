@@ -37,7 +37,7 @@ class OnboardingActivity : ComponentActivity() {
                     viewModel = viewModel,
                     onScanQr = {
                         qrLauncher.launch(ScanOptions().apply {
-                            setPrompt("Scan the QR code from textbee.dev/dashboard")
+                            setPrompt("Scan the QR code from sms.gabay.online/dashboard")
                             setBeepEnabled(true)
                             setOrientationLocked(false)
                         })

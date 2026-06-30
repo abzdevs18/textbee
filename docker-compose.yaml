@@ -1,20 +1,20 @@
 services:
   # MongoDB service
-  textbee-db:
-    container_name: textbee-db
+  gabay-sms-db:
+    container_name: gabay-sms-db
     image: mongo:latest
     restart: always
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:-adminUser}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASS:-adminPassword}
-      - MONGO_INITDB_DATABASE=textbee
+      - MONGO_INITDB_DATABASE=gabay_sms
     volumes:
       # - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
       - mongodb_data:/data/db
     ports:
       - "${MONGO_PORT:-27018}:27017"
     networks:
-      - textbee-network
+      - gabay-sms-network
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 30s
@@ -24,7 +24,7 @@ services:
 
   # MongoDB Express (optional admin UI)
   mongo-express:
-    container_name: textbee-mongo-express
+    container_name: gabay-sms-mongo-express
     image: mongo-express:latest
     restart: always
     ports:
@@ -32,59 +32,59 @@ services:
     environment:
       - ME_CONFIG_MONGODB_ADMINUSERNAME=${MONGO_ROOT_USER:-adminUser}
       - ME_CONFIG_MONGODB_ADMINPASSWORD=${MONGO_ROOT_PASS:-adminPassword}
-      - ME_CONFIG_MONGODB_SERVER=textbee-db
+      - ME_CONFIG_MONGODB_SERVER=gabay-sms-db
     depends_on:
-      textbee-db:
+      gabay-sms-db:
         condition: service_healthy
     networks:
-      - textbee-network
+      - gabay-sms-network
 
   # NestJS API
-  textbee-api:
-    container_name: textbee-api
-    # image: ghcr.io/vernu/textbee/api:latest
+  gabay-sms-api:
+    container_name: gabay-sms-api
     build:
       context: ./api
       dockerfile: Dockerfile
     restart: always
     ports:
-      - "${PORT:-3001}:3001"
+      - "${API_PORT:-3001}:3001"
     env_file:
       - ./api/.env
     environment:
-      - PORT=${PORT:-3001}
-      - REDIS_URL=${REDIS_URL:-redis://textbee-redis:6379}
+      - PORT=3001
+      - REDIS_URL=${REDIS_URL:-redis://gabay-sms-redis:6379}
 
     depends_on:
-      textbee-db:
+      gabay-sms-db:
         condition: service_healthy
     networks:
-      - textbee-network
+      - gabay-sms-network
 
   # Next.js Web
-  textbee-web:
-    container_name: textbee-web
-    # image: ghcr.io/vernu/textbee/web:latest
+  gabay-sms-web:
+    container_name: gabay-sms-web
     build:
       context: ./web
       dockerfile: Dockerfile
     restart: always
     ports:
-      - "${PORT:-3000}:3000"
+      - "${WEB_PORT:-3000}:3000"
     env_file:
       - ./web/.env
     environment:
-      - PORT=${PORT:-3000}
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001/api/v1}
+      - PORT=3000
+      - CONTAINER_RUNTIME=docker
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-https://sms.gabay.online/api/v1}
+      - INTERNAL_API_BASE_URL=${INTERNAL_API_BASE_URL:-http://gabay-sms-api:3001/api/v1}
 
     depends_on:
-      - textbee-api
+      - gabay-sms-api
     networks:
-      - textbee-network
+      - gabay-sms-network
 
   # Redis (if SMS queue is needed)
-  textbee-redis:
-    container_name: textbee-redis
+  gabay-sms-redis:
+    container_name: gabay-sms-redis
     image: redis:alpine
     restart: always
     ports:
@@ -92,7 +92,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - textbee-network
+      - gabay-sms-network
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -102,9 +102,9 @@ services:
       start_period: 20s
 
 networks:
-  textbee-network:
+  gabay-sms-network:
     driver: bridge
 
 volumes:
   mongodb_data:
-  redis_data: 
+  redis_data:
