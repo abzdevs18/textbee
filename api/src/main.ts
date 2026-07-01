@@ -26,7 +26,42 @@ process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason)
 })
 
+function initializeFirebaseAdmin() {
+  const firebaseProjectId = process.env.FIREBASE_PROJECT_ID
+  const firebasePrivateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(
+    /\\n/g,
+    '\n',
+  )
+  const firebaseClientEmail = process.env.FIREBASE_CLIENT_EMAIL
+
+  if (firebaseProjectId && firebasePrivateKey && firebaseClientEmail) {
+    const firebaseConfig = {
+      type: 'service_account',
+      projectId: firebaseProjectId,
+      privateKeyId: process.env.FIREBASE_PRIVATE_KEY_ID,
+      privateKey: firebasePrivateKey,
+      clientEmail: firebaseClientEmail,
+      clientId: process.env.FIREBASE_CLIENT_ID,
+      authUri: 'https://accounts.google.com/o/oauth2/auth',
+      tokenUri: 'https://oauth2.googleapis.com/token',
+      authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
+      clientC509CertUrl: process.env.FIREBASE_CLIENT_C509_CERT_URL,
+    }
+
+    firebase.initializeApp({
+      credential: firebase.credential.cert(firebaseConfig),
+    })
+    logger.log(`Firebase Admin initialized for project ${firebaseProjectId}`)
+  } else {
+    logger.warn(
+      'Firebase service account is not configured; push notifications are disabled.',
+    )
+  }
+}
+
 async function bootstrap() {
+  initializeFirebaseAdmin()
+
   const app: NestExpressApplication = await NestFactory.create(AppModule)
   const PORT = process.env.PORT || 3001
 
@@ -53,36 +88,6 @@ async function bootstrap() {
       persistAuthorization: true,
     },
   })
-
-  const firebaseProjectId = process.env.FIREBASE_PROJECT_ID
-  const firebasePrivateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(
-    /\\n/g,
-    '\n',
-  )
-  const firebaseClientEmail = process.env.FIREBASE_CLIENT_EMAIL
-
-  if (firebaseProjectId && firebasePrivateKey && firebaseClientEmail) {
-    const firebaseConfig = {
-      type: 'service_account',
-      projectId: firebaseProjectId,
-      privateKeyId: process.env.FIREBASE_PRIVATE_KEY_ID,
-      privateKey: firebasePrivateKey,
-      clientEmail: firebaseClientEmail,
-      clientId: process.env.FIREBASE_CLIENT_ID,
-      authUri: 'https://accounts.google.com/o/oauth2/auth',
-      tokenUri: 'https://oauth2.googleapis.com/token',
-      authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
-      clientC509CertUrl: process.env.FIREBASE_CLIENT_C509_CERT_URL,
-    }
-
-    firebase.initializeApp({
-      credential: firebase.credential.cert(firebaseConfig),
-    })
-  } else {
-    logger.warn(
-      'Firebase service account is not configured; push notifications are disabled.',
-    )
-  }
 
   app.use(
     '/api/v1/billing/webhook/polar',

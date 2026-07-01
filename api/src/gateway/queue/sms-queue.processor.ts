@@ -13,6 +13,12 @@ import { Logger } from '@nestjs/common'
 function getFcmErrorCode(error: { code?: string; message?: string } | null): string {
   if (!error?.code) return 'FCM_DELIVERY_FAILED'
   const code = String(error.code).toLowerCase().replace(/^messaging\//, '')
+  if (code === 'app/no-app') {
+    return 'FCM_FIREBASE_ADMIN_NOT_CONFIGURED'
+  }
+  if (code === 'app/invalid-credential') {
+    return 'FCM_FIREBASE_ADMIN_INVALID_CREDENTIAL'
+  }
   if (
     code === 'registration-token-not-registered' ||
     code === 'unregistered'
@@ -35,6 +41,13 @@ const FCM_ACTIONABLE_MESSAGE =
   'The device token is invalid. Please open the Gabay SMS mobile app, click on the update button to resync and try again.'
 
 function getFcmErrorMessage(error: { code?: string; message?: string } | null | undefined): string {
+  const code = String(error?.code || '').toLowerCase()
+  if (code === 'app/no-app') {
+    return 'FCM_DELIVERY_FAILED: Firebase Admin is not initialized on the TextBee API server. Configure the FIREBASE_* service-account environment variables in Coolify and redeploy.'
+  }
+  if (code === 'app/invalid-credential') {
+    return 'FCM_DELIVERY_FAILED: Firebase Admin credentials are invalid. Check the TextBee API FIREBASE_* service-account environment variables in Coolify.'
+  }
   const rawPart = `FCM_DELIVERY_FAILED: ${error?.message || 'FCM delivery failed'}`
   return `${rawPart} — ${FCM_ACTIONABLE_MESSAGE}`
 }
