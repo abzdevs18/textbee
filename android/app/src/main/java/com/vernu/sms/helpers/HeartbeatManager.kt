@@ -57,6 +57,17 @@ object HeartbeatManager {
     @JvmStatic
     fun triggerHeartbeat(context: Context) {
         Log.d(TAG, "Triggering immediate heartbeat")
+        val appContext = context.applicationContext
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val heartbeatWork = OneTimeWorkRequest.Builder(HeartbeatWorker::class.java)
+            .setConstraints(constraints)
+            .addTag(AppConstants.HEARTBEAT_WORK_TAG)
+            .build()
+
+        WorkManager.getInstance(appContext).enqueue(heartbeatWork)
         scheduleHeartbeat(context)
     }
 }

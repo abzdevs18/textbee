@@ -3,6 +3,7 @@ package com.vernu.sms.helpers;
 import android.content.Context;
 import android.util.Log;
 
+import com.google.firebase.messaging.FirebaseMessaging;
 import com.vernu.sms.ApiManager;
 import com.vernu.sms.AppConstants;
 import com.vernu.sms.BuildConfig;
@@ -84,13 +85,31 @@ public class VersionTracker {
             return;
         }
         
-        RegisterDeviceInputDTO updateInput = new RegisterDeviceInputDTO();
-        updateInput.setAppVersionCode(BuildConfig.VERSION_CODE);
-        updateInput.setAppVersionName(BuildConfig.VERSION_NAME);
-        
+        FirebaseMessaging.getInstance().getToken()
+                .addOnCompleteListener(task -> {
+                    RegisterDeviceInputDTO updateInput = new RegisterDeviceInputDTO();
+                    updateInput.setAppVersionCode(BuildConfig.VERSION_CODE);
+                    updateInput.setAppVersionName(BuildConfig.VERSION_NAME);
+
+                    if (task.isSuccessful()) {
+                        updateInput.setFcmToken(task.getResult());
+                    } else {
+                        Log.e(TAG, "Failed to obtain FCM token during version sync");
+                    }
+
+                    sendVersionUpdate(context, deviceId, apiKey, updateInput);
+                });
+    }
+
+    private static void sendVersionUpdate(
+            Context context,
+            String deviceId,
+            String apiKey,
+            RegisterDeviceInputDTO updateInput
+    ) {
         Call<RegisterDeviceResponseDTO> apiCall = ApiManager.getApiService()
                 .updateDevice(deviceId, apiKey, updateInput);
-        
+
         apiCall.enqueue(new Callback<RegisterDeviceResponseDTO>() {
             @Override
             public void onResponse(Call<RegisterDeviceResponseDTO> call, Response<RegisterDeviceResponseDTO> response) {
@@ -108,4 +127,4 @@ public class VersionTracker {
             }
         });
     }
-} 
+}

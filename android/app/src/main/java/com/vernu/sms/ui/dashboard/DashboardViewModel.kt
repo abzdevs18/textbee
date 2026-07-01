@@ -92,7 +92,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         // matching legacy MainActivity behaviour (service is killed by OS on modern Android).
         if (isEnabled) {
             TextBeeUtils.startStickyNotificationService(context)
-            if (deviceId.isNotEmpty()) HeartbeatManager.scheduleHeartbeat(context)
+            if (deviceId.isNotEmpty()) HeartbeatManager.triggerHeartbeat(context)
         }
     }
 
