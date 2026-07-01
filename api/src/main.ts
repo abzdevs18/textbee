@@ -26,32 +26,94 @@ process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason)
 })
 
-function initializeFirebaseAdmin() {
-  const firebaseProjectId = process.env.FIREBASE_PROJECT_ID
-  const firebasePrivateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(
-    /\\n/g,
-    '\n',
-  )
-  const firebaseClientEmail = process.env.FIREBASE_CLIENT_EMAIL
+type FirebaseServiceAccountConfig = {
+  projectId?: string
+  privateKeyId?: string
+  privateKey?: string
+  clientEmail?: string
+  clientId?: string
+  clientC509CertUrl?: string
+}
 
-  if (firebaseProjectId && firebasePrivateKey && firebaseClientEmail) {
-    const firebaseConfig = {
+function normalizePrivateKey(privateKey?: string) {
+  return privateKey?.replace(/\\n/g, '\n')
+}
+
+function getFirebaseConfigFromJson(): FirebaseServiceAccountConfig | null {
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()
+  if (!rawJson) return null
+
+  try {
+    const parsed = JSON.parse(rawJson)
+    return {
+      projectId: parsed.project_id || parsed.projectId,
+      privateKeyId: parsed.private_key_id || parsed.privateKeyId,
+      privateKey: normalizePrivateKey(parsed.private_key || parsed.privateKey),
+      clientEmail: parsed.client_email || parsed.clientEmail,
+      clientId: parsed.client_id || parsed.clientId,
+      clientC509CertUrl:
+        parsed.client_x509_cert_url || parsed.clientC509CertUrl,
+    }
+  } catch (error) {
+    logger.error(
+      'FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON; falling back to individual FIREBASE_* variables.',
+      (error as Error).message,
+    )
+    return null
+  }
+}
+
+function getFirebaseConfigFromEnv(): FirebaseServiceAccountConfig {
+  return {
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    privateKeyId: process.env.FIREBASE_PRIVATE_KEY_ID,
+    privateKey: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    clientId: process.env.FIREBASE_CLIENT_ID,
+    clientC509CertUrl: process.env.FIREBASE_CLIENT_C509_CERT_URL,
+  }
+}
+
+function hasRequiredFirebaseFields(config: FirebaseServiceAccountConfig) {
+  return Boolean(config.projectId && config.privateKey && config.clientEmail)
+}
+
+function getFirebaseConfig(): FirebaseServiceAccountConfig {
+  const jsonConfig = getFirebaseConfigFromJson()
+  if (jsonConfig && hasRequiredFirebaseFields(jsonConfig)) {
+    return jsonConfig
+  }
+
+  if (jsonConfig) {
+    logger.warn(
+      'FIREBASE_SERVICE_ACCOUNT_JSON is present but does not contain service-account private_key/client_email. Android google-services.json cannot be used for server push notifications.',
+    )
+  }
+
+  return getFirebaseConfigFromEnv()
+}
+
+function initializeFirebaseAdmin() {
+  const firebaseConfig = getFirebaseConfig()
+
+  if (hasRequiredFirebaseFields(firebaseConfig)) {
+    const serviceAccountConfig = {
       type: 'service_account',
-      projectId: firebaseProjectId,
-      privateKeyId: process.env.FIREBASE_PRIVATE_KEY_ID,
-      privateKey: firebasePrivateKey,
-      clientEmail: firebaseClientEmail,
-      clientId: process.env.FIREBASE_CLIENT_ID,
+      projectId: firebaseConfig.projectId,
+      privateKeyId: firebaseConfig.privateKeyId,
+      privateKey: firebaseConfig.privateKey,
+      clientEmail: firebaseConfig.clientEmail,
+      clientId: firebaseConfig.clientId,
       authUri: 'https://accounts.google.com/o/oauth2/auth',
       tokenUri: 'https://oauth2.googleapis.com/token',
       authProviderX509CertUrl: 'https://www.googleapis.com/oauth2/v1/certs',
-      clientC509CertUrl: process.env.FIREBASE_CLIENT_C509_CERT_URL,
+      clientC509CertUrl: firebaseConfig.clientC509CertUrl,
     }
 
     firebase.initializeApp({
-      credential: firebase.credential.cert(firebaseConfig),
+      credential: firebase.credential.cert(serviceAccountConfig),
     })
-    logger.log(`Firebase Admin initialized for project ${firebaseProjectId}`)
+    logger.log(`Firebase Admin initialized for project ${firebaseConfig.projectId}`)
   } else {
     logger.warn(
       'Firebase service account is not configured; push notifications are disabled.',
