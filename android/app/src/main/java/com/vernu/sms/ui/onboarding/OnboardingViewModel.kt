@@ -152,6 +152,7 @@ class OnboardingViewModel : ViewModel() {
                     }
                     _registrationSuccess.send(Unit)
                 } else {
+                    val registrationEndpoint = "${BuildConfig.API_BASE_URL}gateway/devices"
                     _state.update {
                         it.copy(
                             isLoading = false,
@@ -160,7 +161,7 @@ class OnboardingViewModel : ViewModel() {
                                 404 -> if (shouldUpdate) {
                                     "Device ID not found. Verify it in your dashboard."
                                 } else {
-                                    "Device registration endpoint not found. Update the app and try again."
+                                    "Device registration endpoint not found at $registrationEndpoint. Installed app: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})."
                                 }
                                 429 -> response.serverErrorMessage()
                                     ?: "You've reached your plan's device limit. Disable or remove another device, or upgrade your plan."
@@ -173,10 +174,12 @@ class OnboardingViewModel : ViewModel() {
             } catch (e: Exception) {
                 val message = when {
                     e.message == "missing_id" -> "Unexpected server response. Please try again."
+                    e.message?.startsWith("fcm_token_failed") == true ->
+                        "Couldn't get a Firebase push token. Update Google Play services, reinstall Gabay SMS, and try again."
                     e.message?.contains("Unable to resolve host") == true ||
                     e.message?.contains("timeout") == true ||
                     e.message?.contains("connect") == true ->
-                        "No internet connection. Check your network and retry."
+                        "Can't reach ${BuildConfig.API_BASE_URL}. Check your phone internet connection and retry."
                     else -> "Something went wrong. Please try again."
                 }
                 _state.update { it.copy(isLoading = false, errorMessage = message) }
@@ -187,7 +190,17 @@ class OnboardingViewModel : ViewModel() {
 
     private suspend fun getFcmToken(): String = suspendCoroutine { cont ->
         FirebaseMessaging.getInstance().token
-            .addOnSuccessListener { token -> cont.resume(token) }
-            .addOnFailureListener { e -> cont.resumeWithException(e) }
+            .addOnSuccessListener { token ->
+                if (token.isBlank()) {
+                    cont.resumeWithException(IllegalStateException("fcm_token_failed:blank"))
+                } else {
+                    cont.resume(token)
+                }
+            }
+            .addOnFailureListener { e ->
+                cont.resumeWithException(
+                    IllegalStateException("fcm_token_failed:${e.message}", e)
+                )
+            }
     }
 }
