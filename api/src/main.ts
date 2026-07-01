@@ -94,6 +94,22 @@ function getFirebaseConfig(): FirebaseServiceAccountConfig {
 }
 
 function initializeFirebaseAdmin() {
+  // Try static config first (hardcoded credentials for production)
+  const staticServiceAccount = getStaticFirebaseServiceAccount()
+  
+  if (staticServiceAccount) {
+    try {
+      firebase.initializeApp({
+        credential: firebase.credential.cert(staticServiceAccount),
+      })
+      logger.log(`Firebase Admin initialized (static config) for project ${staticServiceAccount.project_id}`)
+      return
+    } catch (error) {
+      logger.error('Failed to initialize Firebase with static config:', (error as Error).message)
+    }
+  }
+
+  // Fall back to environment variables
   const firebaseConfig = getFirebaseConfig()
 
   if (hasRequiredFirebaseFields(firebaseConfig)) {
@@ -118,6 +134,18 @@ function initializeFirebaseAdmin() {
     logger.warn(
       'Firebase service account is not configured; push notifications are disabled.',
     )
+  }
+}
+
+function getStaticFirebaseServiceAccount(): any | null {
+  // Try to load from separate config file (not tracked in git)
+  try {
+    // This file should exist in production but not in the git repo
+    const { firebaseServiceAccount } = require('./firebase-config')
+    return firebaseServiceAccount
+  } catch (error) {
+    // Config file doesn't exist, that's okay - will fall back to env vars
+    return null
   }
 }
 

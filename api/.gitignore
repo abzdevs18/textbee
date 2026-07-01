@@ -36,3 +36,6 @@ lerna-debug.log*
 
 
 .env
+
+# Firebase credentials (contains sensitive service account keys)
+src/firebase-config.ts
