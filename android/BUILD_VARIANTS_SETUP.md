@@ -12,9 +12,9 @@ The app now supports two build variants:
 
 | Feature | Dev | Prod |
 |---------|-----|------|
-| Package Name | `online.gabay.sms.dev` | `online.gabay.sms` |
+| Package Name | `sms.gabay.online` | `sms.gabay.online` |
 | App Name | "Gabay SMS (Dev)" | "Gabay SMS" |
-| API Base URL | `https://sms.gabay.online/api/v1/` | `https://sms.gabay.online/api/v1/` |
+| API Base URL | `https://smsapi.gabay.online/api/v1/` | `https://smsapi.gabay.online/api/v1/` |
 | Firebase Config | `app/src/dev/google-services.json` | `app/src/prod/google-services.json` |
 | Version Suffix | `-dev` appended | No suffix |
 
@@ -29,19 +29,19 @@ The app now supports two build variants:
 #### For Development:
 - Create a new Firebase project for development
 - Download the `google-services.json` for your dev project
-- **Important**: Make sure the package name in Firebase is set to `online.gabay.sms.dev`
+- **Important**: Make sure the package name in Firebase is set to `sms.gabay.online`
 - Replace the template file at `app/src/dev/google-services.json` with your actual dev configuration
 
 ### 2. API Configuration
 
 The API base URLs are now configured via build variants:
-- **Dev**: `https://sms.gabay.online/api/v1/`
-- **Prod**: `https://sms.gabay.online/api/v1/`
+- **Dev**: `https://smsapi.gabay.online/api/v1/`
+- **Prod**: `https://smsapi.gabay.online/api/v1/`
 
 To change the dev API URL, edit the `buildConfigField` in `app/build.gradle`:
 ```gradle
 dev {
-    buildConfigField "String", "API_BASE_URL", '"https://sms.gabay.online/api/v1/"'
+    buildConfigField "String", "API_BASE_URL", '"https://smsapi.gabay.online/api/v1/"'
 }
 ```
 
@@ -103,5 +103,5 @@ if (BuildConfig.ENVIRONMENT.equals("development")) {
 - Verify API URLs are accessible
 
 ### Firebase Issues:
-- Confirm the package name in Firebase matches the variant (`online.gabay.sms.dev` for dev)
+- Confirm the package name in Firebase matches the variant (`sms.gabay.online` for both current flavors)
 - Ensure SHA-1 fingerprints are added to Firebase if using authentication

@@ -74,7 +74,7 @@ services:
     environment:
       - PORT=3000
       - CONTAINER_RUNTIME=docker
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-https://sms.gabay.online/api/v1}
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-https://smsapi.gabay.online/api/v1}
       - INTERNAL_API_BASE_URL=${INTERNAL_API_BASE_URL:-http://gabay-sms-api:3001/api/v1}
 
     depends_on:

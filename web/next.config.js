@@ -23,6 +23,28 @@ const nextConfig = {
       },
     ]
   },
+
+  async headers() {
+    return [
+      {
+        source: '/downloads/gabay-sms-2.8.0.apk',
+        headers: [
+          {
+            key: 'Content-Type',
+            value: 'application/vnd.android.package-archive',
+          },
+          {
+            key: 'Content-Disposition',
+            value: 'attachment; filename="gabay-sms-2.8.0.apk"',
+          },
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+    ]
+  },
 }
 
 module.exports = nextConfig

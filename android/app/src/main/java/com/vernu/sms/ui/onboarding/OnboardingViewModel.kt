@@ -157,7 +157,11 @@ class OnboardingViewModel : ViewModel() {
                             isLoading = false,
                             errorMessage = when (response.code()) {
                                 401 -> "Invalid API key. Go back and check your key."
-                                404 -> "Device ID not found. Verify it in your dashboard."
+                                404 -> if (shouldUpdate) {
+                                    "Device ID not found. Verify it in your dashboard."
+                                } else {
+                                    "Device registration endpoint not found. Update the app and try again."
+                                }
                                 429 -> response.serverErrorMessage()
                                     ?: "You've reached your plan's device limit. Disable or remove another device, or upgrade your plan."
                                 in 500..599 -> "Server error. Please try again in a moment."

@@ -36,7 +36,7 @@ Gabay SMS is Gabay's customized self-hosted Android SMS gateway. It lets Gabay s
 const API_KEY = 'YOUR_API_KEY';
 const DEVICE_ID = 'YOUR_DEVICE_ID';
 
-await axios.post(`https://sms.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/send-sms`, {
+await axios.post(`https://smsapi.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/send-sms`, {
   recipients: [ '+251912345678' ],
   message: 'Hello World!',
 }, {
@@ -50,7 +50,7 @@ await axios.post(`https://sms.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/s
 **Code Snippet**: Curl command to send an SMS message via the REST API
 
 ```bash
-curl -X POST "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/send-sms" \
+curl -X POST "https://smsapi.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/send-sms" \
   -H 'x-api-key: YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -69,7 +69,7 @@ To receive SMS messages, you can enable the feature from the mobile app. You can
 const API_KEY = 'YOUR_API_KEY';
 const DEVICE_ID = 'YOUR_DEVICE_ID';
 
-await axios.get(`https://sms.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/get-received-sms`, {
+await axios.get(`https://smsapi.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/get-received-sms`, {
   headers: {
     'x-api-key': API_KEY,
   },
@@ -80,7 +80,7 @@ await axios.get(`https://sms.gabay.online/api/v1/gateway/devices/${DEVICE_ID}/ge
 **Code Snippet**: Curl command to fetch received SMS messages
 
 ```bash
-curl -X GET "https://sms.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/get-received-sms"\
+curl -X GET "https://smsapi.gabay.online/api/v1/gateway/devices/YOUR_DEVICE_ID/get-received-sms"\
   -H "x-api-key: YOUR_API_KEY"
 ```
 
