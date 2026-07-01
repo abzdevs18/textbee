@@ -39,10 +39,10 @@ function normalizePrivateKey(privateKey?: string) {
   return privateKey?.replace(/\\n/g, '\n')
 }
 
-function getFirebaseConfigFromJson(): FirebaseServiceAccountConfig | null {
-  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()
-  if (!rawJson) return null
-
+function parseFirebaseServiceAccount(
+  rawJson: string,
+  sourceName: string,
+): FirebaseServiceAccountConfig | null {
   try {
     const parsed = JSON.parse(rawJson)
     return {
@@ -56,11 +56,40 @@ function getFirebaseConfigFromJson(): FirebaseServiceAccountConfig | null {
     }
   } catch (error) {
     logger.error(
-      'FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON; falling back to individual FIREBASE_* variables.',
+      `${sourceName} does not contain a valid Firebase service-account JSON document.`,
       (error as Error).message,
     )
     return null
   }
+}
+
+function getFirebaseConfigFromBase64(): FirebaseServiceAccountConfig | null {
+  const encoded = process.env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64?.trim()
+  if (!encoded) return null
+
+  try {
+    const rawJson = Buffer.from(encoded, 'base64').toString('utf8')
+    return parseFirebaseServiceAccount(
+      rawJson,
+      'FIREBASE_SERVICE_ACCOUNT_JSON_BASE64',
+    )
+  } catch (error) {
+    logger.error(
+      'FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 could not be decoded.',
+      (error as Error).message,
+    )
+    return null
+  }
+}
+
+function getFirebaseConfigFromJson(): FirebaseServiceAccountConfig | null {
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()
+  if (!rawJson) return null
+
+  return parseFirebaseServiceAccount(
+    rawJson,
+    'FIREBASE_SERVICE_ACCOUNT_JSON',
+  )
 }
 
 function getFirebaseConfigFromEnv(): FirebaseServiceAccountConfig {
@@ -79,6 +108,17 @@ function hasRequiredFirebaseFields(config: FirebaseServiceAccountConfig) {
 }
 
 function getFirebaseConfig(): FirebaseServiceAccountConfig {
+  const base64Config = getFirebaseConfigFromBase64()
+  if (base64Config && hasRequiredFirebaseFields(base64Config)) {
+    return base64Config
+  }
+
+  if (base64Config) {
+    logger.warn(
+      'FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 is present but is not an Admin SDK service-account document.',
+    )
+  }
+
   const jsonConfig = getFirebaseConfigFromJson()
   if (jsonConfig && hasRequiredFirebaseFields(jsonConfig)) {
     return jsonConfig
@@ -94,22 +134,6 @@ function getFirebaseConfig(): FirebaseServiceAccountConfig {
 }
 
 function initializeFirebaseAdmin() {
-  // Try static config first (hardcoded credentials for production)
-  const staticServiceAccount = getStaticFirebaseServiceAccount()
-  
-  if (staticServiceAccount) {
-    try {
-      firebase.initializeApp({
-        credential: firebase.credential.cert(staticServiceAccount),
-      })
-      logger.log(`Firebase Admin initialized (static config) for project ${staticServiceAccount.project_id}`)
-      return
-    } catch (error) {
-      logger.error('Failed to initialize Firebase with static config:', (error as Error).message)
-    }
-  }
-
-  // Fall back to environment variables
   const firebaseConfig = getFirebaseConfig()
 
   if (hasRequiredFirebaseFields(firebaseConfig)) {
@@ -134,18 +158,6 @@ function initializeFirebaseAdmin() {
     logger.warn(
       'Firebase service account is not configured; push notifications are disabled.',
     )
-  }
-}
-
-function getStaticFirebaseServiceAccount(): any | null {
-  // Try to load from separate config file (not tracked in git)
-  try {
-    // This file should exist in production but not in the git repo
-    const { firebaseServiceAccount } = require('./firebase-config')
-    return firebaseServiceAccount
-  } catch (error) {
-    // Config file doesn't exist, that's okay - will fall back to env vars
-    return null
   }
 }
 

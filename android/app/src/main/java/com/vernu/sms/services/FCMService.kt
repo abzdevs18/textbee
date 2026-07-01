@@ -34,7 +34,10 @@ class FCMService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        Log.d(TAG, remoteMessage.data.toString())
+        Log.d(
+            TAG,
+            "FCM data message received: id=${remoteMessage.messageId}, keys=${remoteMessage.data.keys}"
+        )
 
         try {
             val messageType = remoteMessage.data["type"]
@@ -43,13 +46,20 @@ class FCMService : FirebaseMessagingService() {
                 return
             }
 
-            val smsPayload = Gson().fromJson(remoteMessage.data["smsData"], SMSPayload::class.java)
-
-            if (remoteMessage.data.isNotEmpty()) {
-                sendSMS(smsPayload)
+            val smsDataJson = remoteMessage.data["smsData"]
+            if (smsDataJson == null) {
+                Log.e(TAG, "FCM data message is missing smsData")
+                return
             }
+
+            val smsPayload = Gson().fromJson(smsDataJson, SMSPayload::class.java)
+            Log.d(
+                TAG,
+                "Parsed SMS command: id=${smsPayload.smsId}, recipients=${smsPayload.recipients?.size ?: 0}"
+            )
+            sendSMS(smsPayload)
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing FCM message: ${e.message}")
+            Log.e(TAG, "Error processing FCM message: ${e.message}", e)
         }
     }
 
@@ -96,7 +106,10 @@ class FCMService : FirebaseMessagingService() {
             )
         }
 
-        Log.d(TAG, "Enqueued ${recipients.size} SMS for sending - Batch: ${smsPayload.smsBatchId}")
+        Log.d(
+            TAG,
+            "Enqueued ${recipients.size} SMS command(s): batch=${smsPayload.smsBatchId}"
+        )
     }
 
     override fun onNewToken(token: String) {

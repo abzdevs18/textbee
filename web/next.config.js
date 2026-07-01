@@ -27,7 +27,7 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/downloads/gabay-sms-2.8.0.apk',
+        source: '/downloads/gabay-sms-2.8.1.apk',
         headers: [
           {
             key: 'Content-Type',
@@ -35,7 +35,7 @@ const nextConfig = {
           },
           {
             key: 'Content-Disposition',
-            value: 'attachment; filename="gabay-sms-2.8.0.apk"',
+            value: 'attachment; filename="gabay-sms-2.8.1.apk"',
           },
           {
             key: 'Cache-Control',
