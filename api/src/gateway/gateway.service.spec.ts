@@ -433,6 +433,14 @@ describe('GatewayService', () => {
       expect(mockSmsBatchModel.create).toHaveBeenCalled()
       expect(mockSmsModel.create).toHaveBeenCalled()
       expect(firebaseAdmin.messaging().sendEach).toHaveBeenCalled()
+      const [fcmMessages] = (firebaseAdmin.messaging().sendEach as jest.Mock).mock.calls[0]
+      expect(fcmMessages[0].data.targetDeviceId).toBe(mockDeviceId)
+      expect(JSON.parse(fcmMessages[0].data.smsData)).toEqual(
+        expect.objectContaining({
+          deviceId: mockDeviceId,
+          targetDeviceId: mockDeviceId,
+        }),
+      )
       expect(result).toEqual(mockFcmResponse)
     })
 
@@ -561,6 +569,14 @@ describe('GatewayService', () => {
       expect(mockSmsBatchModel.create).toHaveBeenCalled()
       expect(mockSmsModel.create).toHaveBeenCalled()
       expect(firebaseAdmin.messaging().sendEach).toHaveBeenCalled()
+      const [fcmMessages] = (firebaseAdmin.messaging().sendEach as jest.Mock).mock.calls[0]
+      expect(fcmMessages[0].data.targetDeviceId).toBe(mockDeviceId)
+      expect(JSON.parse(fcmMessages[0].data.smsData)).toEqual(
+        expect.objectContaining({
+          deviceId: mockDeviceId,
+          targetDeviceId: mockDeviceId,
+        }),
+      )
       expect(result).toHaveProperty('success', true)
     })
 

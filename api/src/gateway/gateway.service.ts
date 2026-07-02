@@ -375,6 +375,8 @@ export class GatewayService {
       const updatedSMSData = {
         smsId: sms._id,
         smsBatchId: smsBatch._id,
+        deviceId: device._id.toString(),
+        targetDeviceId: device._id.toString(),
         message,
         recipients: [recipient],
         ...(smsData.simSubscriptionId !== undefined && {
@@ -390,6 +392,7 @@ export class GatewayService {
       const fcmMessage: Message = {
         data: {
           smsData: stringifiedSMSData,
+          targetDeviceId: device._id.toString(),
         },
         token: device.fcmToken,
         android: {
@@ -645,6 +648,8 @@ export class GatewayService {
       const updatedSMSData = {
         smsId: sms._id,
         smsBatchId: smsBatch._id,
+        deviceId: device._id.toString(),
+        targetDeviceId: device._id.toString(),
         message: metadata.message,
         recipients: [metadata.recipient],
         ...(metadata.simSubscriptionId !== undefined && {
@@ -660,6 +665,7 @@ export class GatewayService {
       const fcmMessage: Message = {
         data: {
           smsData: stringifiedSMSData,
+          targetDeviceId: device._id.toString(),
         },
         token: device.fcmToken,
         android: {

@@ -1,6 +1,8 @@
 package com.vernu.sms.models
 
 class SMSPayload {
+    var deviceId: String? = null
+    var targetDeviceId: String? = null
     var recipients: Array<String>? = null
     var message: String? = null
     var smsId: String? = null

@@ -54,6 +54,13 @@ class FCMService : FirebaseMessagingService() {
             }
 
             val smsPayload = Gson().fromJson(smsDataJson, SMSPayload::class.java)
+            val targetDeviceId = remoteMessage.data["targetDeviceId"]
+                ?: remoteMessage.data["deviceId"]
+                ?: smsPayload.targetDeviceId
+                ?: smsPayload.deviceId
+            if (!isForThisDevice(targetDeviceId, smsPayload.smsId)) {
+                return
+            }
             Log.d(
                 TAG,
                 "Parsed SMS command: id=${smsPayload.smsId}, recipients=${smsPayload.recipients?.size ?: 0}"
@@ -86,6 +93,31 @@ class FCMService : FirebaseMessagingService() {
             Log.e(TAG, "Failed to send heartbeat in response to backend check")
         }
         HeartbeatManager.scheduleHeartbeat(this)
+    }
+
+    private fun isForThisDevice(targetDeviceId: String?, smsId: String?): Boolean {
+        if (targetDeviceId.isNullOrBlank()) {
+            Log.w(TAG, "SMS command ${smsId ?: "(unknown)"} has no target device id; accepting legacy payload")
+            return true
+        }
+
+        val localDeviceId = SharedPreferenceHelper.getSharedPreferenceString(
+            this, AppConstants.SHARED_PREFS_DEVICE_ID_KEY, ""
+        ) ?: ""
+        if (localDeviceId.isBlank()) {
+            Log.e(TAG, "Ignoring SMS command ${smsId ?: "(unknown)"} because local device id is not configured")
+            return false
+        }
+
+        if (targetDeviceId != localDeviceId) {
+            Log.w(
+                TAG,
+                "Ignoring SMS command ${smsId ?: "(unknown)"} for device $targetDeviceId on local device $localDeviceId"
+            )
+            return false
+        }
+
+        return true
     }
 
     private fun sendSMS(smsPayload: SMSPayload?) {
