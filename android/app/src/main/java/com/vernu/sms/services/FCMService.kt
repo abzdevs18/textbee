@@ -20,6 +20,7 @@ import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO
 import com.vernu.sms.helpers.HeartbeatHelper
 import com.vernu.sms.helpers.HeartbeatManager
+import com.vernu.sms.helpers.MessageSyncNotifier
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.models.SMSPayload
 import com.vernu.sms.workers.SmsSendWorker
@@ -110,6 +111,7 @@ class FCMService : FirebaseMessagingService() {
             TAG,
             "Enqueued ${recipients.size} SMS command(s): batch=${smsPayload.smsBatchId}"
         )
+        MessageSyncNotifier.notifyChanged(this)
     }
 
     override fun onNewToken(token: String) {

@@ -7,6 +7,7 @@ import com.google.gson.Gson
 import com.vernu.sms.ApiManager
 import com.vernu.sms.dtos.SMSDTO
 import com.vernu.sms.dtos.SMSForwardResponseDTO
+import com.vernu.sms.helpers.MessageSyncNotifier
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -59,14 +60,12 @@ class SMSReceivedWorker(context: Context, workerParams: WorkerParameters) : Work
         val deviceId = inputData.getString(KEY_DEVICE_ID)
         val apiKey = inputData.getString(KEY_API_KEY)
         val smsDtoJson = inputData.getString(KEY_SMS_DTO)
-        val retryCount = inputData.getInt(KEY_RETRY_COUNT, 0)
-
         if (deviceId == null || apiKey == null || smsDtoJson == null) {
             Log.e(TAG, "Missing required parameters")
             return Result.failure()
         }
 
-        if (retryCount >= MAX_RETRIES) {
+        if (runAttemptCount >= MAX_RETRIES) {
             Log.e(TAG, "Maximum retry count reached for received SMS")
             return Result.failure()
         }
@@ -77,6 +76,7 @@ class SMSReceivedWorker(context: Context, workerParams: WorkerParameters) : Work
             val response = ApiManager.getApiService().sendReceivedSMS(deviceId, apiKey, smsDTO).execute()
             if (response.isSuccessful) {
                 Log.d(TAG, "Received SMS sent to server successfully")
+                MessageSyncNotifier.notifyChanged(applicationContext)
                 Result.success()
             } else {
                 Log.e(TAG, "Failed to send received SMS to server. Response code: ${response.code()}")

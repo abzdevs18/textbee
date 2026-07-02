@@ -7,6 +7,7 @@ import com.google.gson.Gson
 import com.vernu.sms.ApiManager
 import com.vernu.sms.dtos.SMSDTO
 import com.vernu.sms.dtos.SMSForwardResponseDTO
+import com.vernu.sms.helpers.MessageSyncNotifier
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -51,14 +52,12 @@ class SMSStatusUpdateWorker(context: Context, workerParams: WorkerParameters) : 
         val deviceId = inputData.getString(KEY_DEVICE_ID)
         val apiKey = inputData.getString(KEY_API_KEY)
         val smsDtoJson = inputData.getString(KEY_SMS_DTO)
-        val retryCount = inputData.getInt(KEY_RETRY_COUNT, 0)
-
         if (deviceId == null || apiKey == null || smsDtoJson == null) {
             Log.e(TAG, "Missing required parameters")
             return Result.failure()
         }
 
-        if (retryCount >= MAX_RETRIES) {
+        if (runAttemptCount >= MAX_RETRIES) {
             Log.e(TAG, "Maximum retry count reached for SMS status update")
             return Result.failure()
         }
@@ -69,6 +68,7 @@ class SMSStatusUpdateWorker(context: Context, workerParams: WorkerParameters) : 
             val response = ApiManager.getApiService().updateSMSStatus(deviceId, apiKey, smsDTO).execute()
             if (response.isSuccessful) {
                 Log.d(TAG, "SMS status updated successfully - ID: ${smsDTO.smsId}, Status: ${smsDTO.status}")
+                MessageSyncNotifier.notifyChanged(applicationContext)
                 Result.success()
             } else {
                 Log.e(TAG, "Failed to update SMS status. Response code: ${response.code()}")
