@@ -695,11 +695,13 @@ describe('GatewayService', () => {
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
         type: SMSType.RECEIVED,
+        hiddenAt: { $exists: false },
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
           type: SMSType.RECEIVED,
+          hiddenAt: { $exists: false },
         },
         null,
         {
@@ -760,10 +762,12 @@ describe('GatewayService', () => {
       expect(mockDeviceModel.findById).toHaveBeenCalledWith(mockDeviceId)
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
+        hiddenAt: { $exists: false },
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
+          hiddenAt: { $exists: false },
         },
         null,
         {
@@ -782,11 +786,13 @@ describe('GatewayService', () => {
 
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
+        hiddenAt: { $exists: false },
         type: SMSType.SENT,
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
+          hiddenAt: { $exists: false },
           type: SMSType.SENT,
         },
         null,
@@ -799,11 +805,13 @@ describe('GatewayService', () => {
 
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
+        hiddenAt: { $exists: false },
         type: SMSType.RECEIVED,
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
+          hiddenAt: { $exists: false },
           type: SMSType.RECEIVED,
         },
         null,

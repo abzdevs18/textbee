@@ -1,6 +1,6 @@
 'use client'
 
-import { Home, MessageSquareText, UserCircle, Users } from 'lucide-react'
+import { Home, ListChecks, MessageSquareText, UserCircle, Users } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import AccountDeletionAlert from './(components)/account-deletion-alert'
@@ -34,6 +34,12 @@ export default function DashboardLayout({
             icon={<MessageSquareText className='h-6 w-6 stroke-[1.5]' />}
             label='Messaging'
             isActive={pathname === '/dashboard/messaging'}
+          />
+          <NavItem
+            href='/dashboard/messages'
+            icon={<ListChecks className='h-6 w-6 stroke-[1.5]' />}
+            label='Queue'
+            isActive={pathname === '/dashboard/messages'}
           />
           <NavItem
             href='/dashboard/community'
@@ -77,6 +83,12 @@ export default function DashboardLayout({
             icon={<MessageSquareText className='h-5 w-5 stroke-[1.5]' />}
             label='Messaging'
             isActive={pathname === '/dashboard/messaging'}
+          />
+          <MobileNavItem
+            href='/dashboard/messages'
+            icon={<ListChecks className='h-5 w-5 stroke-[1.5]' />}
+            label='Queue'
+            isActive={pathname === '/dashboard/messages'}
           />
           <MobileNavItem
             href='/dashboard/community'

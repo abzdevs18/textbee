@@ -46,6 +46,50 @@ export class GatewayController {
   }
 
   @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Search account message history and pending queue' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'type', required: false, type: String, description: 'all, sent, or received' })
+  @ApiQuery({ name: 'status', required: false, type: String, description: 'all, pending, dispatched, sent, delivered, failed, unknown, received, or canceled' })
+  @ApiQuery({ name: 'deviceId', required: false, type: String })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'from', required: false, type: String })
+  @ApiQuery({ name: 'to', required: false, type: String })
+  @Get('/messages')
+  async getAccountMessages(@Request() req) {
+    return this.gatewayService.getAccountMessages(req.user, req.query)
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Cancel a pending queued SMS before dispatch' })
+  @Post('/messages/:smsId/cancel')
+  async cancelPendingSms(
+    @Param('smsId') smsId: string,
+    @Body() body: { reason?: string },
+    @Request() req,
+  ) {
+    return this.gatewayService.cancelPendingSms(smsId, req.user, body?.reason)
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Reroute a pending queued SMS to another device before dispatch' })
+  @Post('/messages/:smsId/reroute')
+  async reroutePendingSms(
+    @Param('smsId') smsId: string,
+    @Body() body: { targetDeviceId: string },
+    @Request() req,
+  ) {
+    return this.gatewayService.reroutePendingSms(smsId, body?.targetDeviceId, req.user)
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Clear visible message history without deleting billing/audit records' })
+  @Delete('/messages')
+  async clearMessageHistory(@Request() req) {
+    return this.gatewayService.clearMessageHistory(req.user, req.query)
+  }
+
+  @UseGuards(AuthGuard)
   @ApiOperation({ summary: 'Register device' })
   @Post('/devices')
   async registerDevice(@Body() input: RegisterDeviceInputDTO, @Request() req) {

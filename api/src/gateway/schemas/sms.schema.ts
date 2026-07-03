@@ -46,6 +46,15 @@ export class SMS {
   requestedAt: Date
 
   @Prop({ type: Date })
+  queuedAt: Date
+
+  @Prop({ type: Date })
+  scheduledAt: Date
+
+  @Prop({ type: String })
+  queueJobId: string
+
+  @Prop({ type: Date })
   dispatchedAt: Date
 
   @Prop({ type: Date })
@@ -56,6 +65,12 @@ export class SMS {
 
   @Prop({ type: Date })
   failedAt: Date
+
+  @Prop({ type: Date })
+  canceledAt: Date
+
+  @Prop({ type: Date, index: true })
+  hiddenAt: Date
   
   @Prop({ type: String, required: false })
   errorCode: string
@@ -75,6 +90,7 @@ export class SMS {
     | 'failed'
     | 'unknown'
     | 'received'
+    | 'canceled'
 
   @Prop({ type: Number, required: false })
   simSubscriptionId?: number
@@ -89,3 +105,5 @@ export const SMSSchema = SchemaFactory.createForClass(SMS)
 
 SMSSchema.index({ device: 1, type: 1, receivedAt: -1 })
 SMSSchema.index({ user: 1, createdAt: -1, type: 1 })
+SMSSchema.index({ user: 1, status: 1, createdAt: -1 })
+SMSSchema.index({ queueJobId: 1 })

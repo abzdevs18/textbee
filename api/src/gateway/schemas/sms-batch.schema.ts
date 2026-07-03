@@ -44,6 +44,7 @@ export class SMSBatch {
     | 'partial_success'
     | 'failed'
     | 'unknown'
+    | 'canceled'
 
   @Prop({ type: String })
   error: string

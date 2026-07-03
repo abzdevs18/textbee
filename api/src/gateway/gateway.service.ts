@@ -25,6 +25,32 @@ import { WebhookService } from '../webhook/webhook.service'
 import { BillingService } from '../billing/billing.service'
 import { SmsQueueService } from './queue/sms-queue.service'
 
+type MessageListParams = {
+  page?: number
+  limit?: number
+  type?: string
+  status?: string
+  deviceId?: string
+  search?: string
+  from?: string
+  to?: string
+  includeHidden?: boolean
+}
+
+type QueueRehydrateResult = {
+  jobId: string
+  smsIds: string[]
+  delayMs?: number
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getUserObjectId(user: User): any {
+  return (user as any)?._id || (user as any)?.id
+}
+
 @Injectable()
 export class GatewayService {
   constructor(
@@ -38,6 +64,199 @@ export class GatewayService {
     private billingService: BillingService,
     private smsQueueService: SmsQueueService,
   ) {}
+
+  private buildVisibleMessageFilter(includeHidden = false): Record<string, any> {
+    return includeHidden ? {} : { hiddenAt: { $exists: false } }
+  }
+
+  private coercePage(value: unknown, fallback = 1): number {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+  }
+
+  private coerceLimit(value: unknown, fallback = 50): number {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallback
+    }
+    return Math.min(Math.floor(parsed), 100)
+  }
+
+  private getSortableDateFilter(params: MessageListParams): Record<string, any> | null {
+    const createdAt: Record<string, Date> = {}
+    if (params.from) {
+      const from = new Date(params.from)
+      if (!Number.isNaN(from.getTime())) {
+        createdAt.$gte = from
+      }
+    }
+    if (params.to) {
+      const to = new Date(params.to)
+      if (!Number.isNaN(to.getTime())) {
+        createdAt.$lte = to
+      }
+    }
+    return Object.keys(createdAt).length > 0 ? { createdAt } : null
+  }
+
+  private buildMessageSearchFilter(search?: string): Record<string, any> | null {
+    const trimmed = search?.trim()
+    if (!trimmed) {
+      return null
+    }
+
+    const regex = new RegExp(escapeRegExp(trimmed), 'i')
+    return {
+      $or: [
+        { message: regex },
+        { recipient: regex },
+        { sender: regex },
+        { status: regex },
+        { errorCode: regex },
+        { errorMessage: regex },
+      ],
+    }
+  }
+
+  private getMessageUserFilter(user: User): Record<string, any> {
+    return { user: getUserObjectId(user) }
+  }
+
+  private async assertMessageBelongsToUser(smsId: string, user: User): Promise<any> {
+    const sms = await this.smsModel.findById(smsId)
+    if (!sms) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'SMS not found',
+        },
+        HttpStatus.NOT_FOUND,
+      )
+    }
+
+    if (sms.user?.toString() !== getUserObjectId(user)?.toString()) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'SMS does not belong to this account',
+        },
+        HttpStatus.FORBIDDEN,
+      )
+    }
+
+    return sms
+  }
+
+  private async markQueuedSmsJobs(
+    queuedJobs: QueueRehydrateResult[],
+    queuedAt = new Date(),
+  ): Promise<void> {
+    if (!Array.isArray(queuedJobs)) {
+      return
+    }
+
+    for (const queuedJob of queuedJobs || []) {
+      if (!queuedJob.smsIds?.length) {
+        continue
+      }
+      const scheduledAt =
+        queuedJob.delayMs !== undefined && queuedJob.delayMs > 0
+          ? new Date(queuedAt.getTime() + queuedJob.delayMs)
+          : undefined
+      await this.smsModel.updateMany(
+        { _id: { $in: queuedJob.smsIds } as any },
+        {
+          $set: {
+            queueJobId: queuedJob.jobId,
+            queuedAt,
+            ...(scheduledAt && { scheduledAt }),
+          },
+        },
+      )
+    }
+  }
+
+  private async requeueRemainingMessages(
+    result: {
+      remainingFcmMessages: any[]
+      remainingDelayMs?: number
+      deviceId?: string
+      smsBatchId?: string
+    },
+  ): Promise<void> {
+    if (!result.remainingFcmMessages?.length || !result.deviceId || !result.smsBatchId) {
+      return
+    }
+
+    const queuedJobs = await this.smsQueueService.addSendSmsJob(
+      result.deviceId,
+      result.remainingFcmMessages,
+      result.smsBatchId,
+      result.remainingDelayMs,
+    )
+    await this.markQueuedSmsJobs(queuedJobs)
+  }
+
+  private buildFcmMessageForSms(sms: any, device: any): Message {
+    const updatedSMSData = {
+      smsId: sms._id,
+      smsBatchId: sms.smsBatch,
+      deviceId: device._id.toString(),
+      targetDeviceId: device._id.toString(),
+      message: sms.message,
+      recipients: [sms.recipient],
+      ...(sms.simSubscriptionId !== undefined && {
+        simSubscriptionId: sms.simSubscriptionId,
+      }),
+
+      // Legacy fields to be removed in the future
+      smsBody: sms.message,
+      receivers: [sms.recipient],
+    }
+
+    return {
+      data: {
+        smsData: JSON.stringify(updatedSMSData),
+        targetDeviceId: device._id.toString(),
+      },
+      token: device.fcmToken,
+      android: {
+        priority: 'high',
+      },
+    }
+  }
+
+  private async refreshBatchStatusFromMessages(smsBatchId?: string): Promise<void> {
+    if (!smsBatchId) {
+      return
+    }
+
+    const allSmsInBatch = await this.smsModel.find({ smsBatch: smsBatchId })
+    if (!allSmsInBatch?.length) {
+      return
+    }
+
+    const statuses = allSmsInBatch.map((sms: any) => String(sms.status).toLowerCase())
+    const allCanceled = statuses.every((status) => status === 'canceled')
+    const allTerminal = statuses.every((status) =>
+      ['sent', 'delivered', 'failed', 'unknown', 'received', 'canceled'].includes(status),
+    )
+    const anyFailed = statuses.some((status) => status === 'failed' || status === 'unknown')
+    const anyCanceled = statuses.some((status) => status === 'canceled')
+
+    if (allCanceled) {
+      await this.smsBatchModel.findByIdAndUpdate(smsBatchId, {
+        $set: { status: 'canceled', completedAt: new Date() },
+      })
+      return
+    }
+
+    if (allTerminal && (anyFailed || anyCanceled)) {
+      await this.smsBatchModel.findByIdAndUpdate(smsBatchId, {
+        $set: { status: 'partial_success', completedAt: new Date() },
+      })
+    }
+  }
 
   // Blocks creating or re-enabling a device when the user's plan device limit
   // is reached. Effective limit comes from the subscription override or the
@@ -411,12 +630,13 @@ export class GatewayService {
         })
 
         // Add to queue
-        await this.smsQueueService.addSendSmsJob(
+        const queuedJobs = await this.smsQueueService.addSendSmsJob(
           deviceId,
           fcmMessages,
           smsBatch._id.toString(),
           delayMs,
         )
+        await this.markQueuedSmsJobs(queuedJobs)
 
         return {
           success: true,
@@ -690,12 +910,13 @@ export class GatewayService {
 
         // Queue each group with its respective delay
         for (const [delayMs, messages] of messagesByDelay.entries()) {
-          await this.smsQueueService.addSendSmsJob(
+          const queuedJobs = await this.smsQueueService.addSendSmsJob(
             deviceId,
             messages,
             smsBatch._id.toString(),
             delayMs,
           )
+          await this.markQueuedSmsJobs(queuedJobs)
         }
 
         return {
@@ -912,6 +1133,7 @@ export class GatewayService {
     const total = await this.smsModel.countDocuments({
       device: device._id,
       type: SMSType.RECEIVED,
+      ...this.buildVisibleMessageFilter(),
     })
 
     // @ts-ignore
@@ -920,6 +1142,7 @@ export class GatewayService {
         {
           device: device._id,
           type: SMSType.RECEIVED,
+          ...this.buildVisibleMessageFilter(),
         },
         null,
         {
@@ -970,7 +1193,7 @@ export class GatewayService {
     const skip = (page - 1) * limit
 
     // Build query based on type filter
-    const query: any = { device: device._id }
+    const query: any = { device: device._id, ...this.buildVisibleMessageFilter() }
 
     if (type === 'sent') {
       query.type = SMSType.SENT
@@ -1006,6 +1229,384 @@ export class GatewayService {
         totalPages,
       },
       data,
+    }
+  }
+
+  async getAccountMessages(
+    user: User,
+    params: MessageListParams = {},
+  ): Promise<{ data: any[]; meta: any; summary: Record<string, number> }> {
+    const page = this.coercePage(params.page, 1)
+    const limit = this.coerceLimit(params.limit, 50)
+    const skip = (page - 1) * limit
+
+    const query: any = {
+      ...this.getMessageUserFilter(user),
+      ...this.buildVisibleMessageFilter(params.includeHidden),
+    }
+
+    if (params.deviceId && params.deviceId !== 'all') {
+      query.device = params.deviceId
+    }
+
+    if (params.type === 'sent') {
+      query.type = SMSType.SENT
+    } else if (params.type === 'received') {
+      query.type = SMSType.RECEIVED
+    }
+
+    if (params.status && params.status !== 'all') {
+      query.status = params.status
+    }
+
+    const dateFilter = this.getSortableDateFilter(params)
+    if (dateFilter) {
+      Object.assign(query, dateFilter)
+    }
+
+    const searchFilter = this.buildMessageSearchFilter(params.search)
+    if (searchFilter) {
+      Object.assign(query, searchFilter)
+    }
+
+    const summaryBaseQuery = {
+      ...this.getMessageUserFilter(user),
+      ...this.buildVisibleMessageFilter(params.includeHidden),
+      ...(params.deviceId && params.deviceId !== 'all' ? { device: params.deviceId } : {}),
+      ...(params.type === 'sent'
+        ? { type: SMSType.SENT }
+        : params.type === 'received'
+          ? { type: SMSType.RECEIVED }
+          : {}),
+      ...(dateFilter || {}),
+      ...(searchFilter || {}),
+    }
+
+    const [
+      total,
+      pending,
+      dispatched,
+      sent,
+      delivered,
+      failed,
+      unknown,
+      received,
+      canceled,
+    ] = await Promise.all([
+      this.smsModel.countDocuments(query),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'pending' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'dispatched' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'sent' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'delivered' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'failed' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'unknown' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'received' }),
+      this.smsModel.countDocuments({ ...summaryBaseQuery, status: 'canceled' }),
+    ])
+
+    const data = await this.smsModel
+      .find(query, null, {
+        sort: { createdAt: -1 },
+        limit,
+        skip,
+      })
+      .populate({
+        path: 'device',
+        select: '_id brand model buildId enabled name',
+      })
+      .lean()
+
+    return {
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      summary: {
+        pending,
+        dispatched,
+        sent,
+        delivered,
+        failed,
+        unknown,
+        received,
+        canceled,
+      },
+      data,
+    }
+  }
+
+  async cancelPendingSms(
+    smsId: string,
+    user: User,
+    reason?: string,
+  ): Promise<any> {
+    const sms = await this.assertMessageBelongsToUser(smsId, user)
+
+    if (sms.status !== 'pending') {
+      throw new HttpException(
+        {
+          success: false,
+          error: `Only pending SMS can be canceled. Current status is ${sms.status}.`,
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    if (!sms.queueJobId) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'This SMS is pending but not linked to a cancellable queue job.',
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    const removal = await this.smsQueueService.removeSmsFromWaitingJob(
+      sms.queueJobId,
+      smsId,
+    )
+    if (!removal.removed) {
+      throw new HttpException(
+        {
+          success: false,
+          error: removal.reason || 'SMS can no longer be canceled.',
+          queueState: removal.state,
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    await this.requeueRemainingMessages(removal)
+
+    const canceledAt = new Date()
+    const metadata = {
+      ...(sms.metadata || {}),
+      canceledReason: reason || 'Canceled from dashboard',
+      canceledFromQueueJobId: sms.queueJobId,
+    }
+
+    const updatedSms = await this.smsModel
+      .findByIdAndUpdate(
+        smsId,
+        {
+          $set: {
+            status: 'canceled',
+            canceledAt,
+            metadata,
+          },
+          $unset: {
+            queueJobId: '',
+            scheduledAt: '',
+          },
+        },
+        { new: true },
+      )
+      .populate({
+        path: 'device',
+        select: '_id brand model buildId enabled name',
+      })
+
+    await this.refreshBatchStatusFromMessages(sms.smsBatch?.toString())
+
+    return {
+      success: true,
+      message: 'Pending SMS canceled',
+      data: updatedSms,
+    }
+  }
+
+  async reroutePendingSms(
+    smsId: string,
+    targetDeviceId: string,
+    user: User,
+  ): Promise<any> {
+    if (!targetDeviceId) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'targetDeviceId is required',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    const sms = await this.assertMessageBelongsToUser(smsId, user)
+
+    if (sms.status !== 'pending') {
+      throw new HttpException(
+        {
+          success: false,
+          error: `Only pending SMS can be rerouted. Current status is ${sms.status}.`,
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    if (!sms.queueJobId) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'This SMS is pending but not linked to a reroutable queue job.',
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    const targetDevice = await this.deviceModel.findById(targetDeviceId)
+    if (!targetDevice?.enabled) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Target device does not exist or is not enabled',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    if (targetDevice.user?.toString() !== getUserObjectId(user)?.toString()) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'Target device does not belong to this account',
+        },
+        HttpStatus.FORBIDDEN,
+      )
+    }
+
+    if (sms.device?.toString() === targetDevice._id.toString()) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'SMS is already routed to the selected device',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    const removal = await this.smsQueueService.removeSmsFromWaitingJob(
+      sms.queueJobId,
+      smsId,
+    )
+    if (!removal.removed) {
+      throw new HttpException(
+        {
+          success: false,
+          error: removal.reason || 'SMS can no longer be rerouted.',
+          queueState: removal.state,
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    await this.requeueRemainingMessages(removal)
+
+    const reroutedAt = new Date()
+    const metadata = {
+      ...(sms.metadata || {}),
+      reroutedAt,
+      reroutedFromDeviceId: sms.device?.toString(),
+      reroutedToDeviceId: targetDevice._id.toString(),
+      reroutedFromQueueJobId: sms.queueJobId,
+    }
+
+    await this.smsModel.findByIdAndUpdate(smsId, {
+      $set: {
+        device: targetDevice._id,
+        metadata,
+      },
+      $unset: {
+        queueJobId: '',
+        scheduledAt: '',
+      },
+    })
+
+    const reroutedSms = {
+      ...((typeof (sms as any).toObject === 'function' ? (sms as any).toObject() : sms) as any),
+      device: targetDevice._id,
+    }
+    const reroutedMessage = this.buildFcmMessageForSms(reroutedSms, targetDevice)
+    const queuedJobs = await this.smsQueueService.addSendSmsJob(
+      targetDevice._id.toString(),
+      [reroutedMessage],
+      sms.smsBatch?.toString(),
+      removal.remainingDelayMs,
+    )
+    await this.markQueuedSmsJobs(queuedJobs)
+
+    const updatedSms = await this.smsModel
+      .findById(smsId)
+      .populate({
+        path: 'device',
+        select: '_id brand model buildId enabled name',
+      })
+      .lean()
+
+    return {
+      success: true,
+      message: 'Pending SMS rerouted',
+      data: updatedSms,
+    }
+  }
+
+  async clearMessageHistory(
+    user: User,
+    params: MessageListParams = {},
+  ): Promise<{ success: true; cleared: number; skippedActive: number }> {
+    const baseQuery: any = {
+      ...this.getMessageUserFilter(user),
+      ...this.buildVisibleMessageFilter(false),
+    }
+
+    if (params.deviceId && params.deviceId !== 'all') {
+      baseQuery.device = params.deviceId
+    }
+    if (params.type === 'sent') {
+      baseQuery.type = SMSType.SENT
+    } else if (params.type === 'received') {
+      baseQuery.type = SMSType.RECEIVED
+    }
+
+    const dateFilter = this.getSortableDateFilter(params)
+    if (dateFilter) {
+      Object.assign(baseQuery, dateFilter)
+    }
+
+    const searchFilter = this.buildMessageSearchFilter(params.search)
+    if (searchFilter) {
+      Object.assign(baseQuery, searchFilter)
+    }
+
+    const activeStatuses = ['pending', 'dispatched']
+    let clearQuery: any = { ...baseQuery, status: { $nin: activeStatuses } }
+    let skippedActiveQuery: any = { ...baseQuery, status: { $in: activeStatuses } }
+
+    if (params.status && params.status !== 'all') {
+      if (activeStatuses.includes(params.status)) {
+        clearQuery = { ...baseQuery, status: '__never_clear_active_status__' }
+        skippedActiveQuery = { ...baseQuery, status: params.status }
+      } else {
+        clearQuery = { ...baseQuery, status: params.status }
+        skippedActiveQuery = { ...baseQuery, status: { $in: activeStatuses } }
+      }
+    }
+
+    const [skippedActive, result] = await Promise.all([
+      this.smsModel.countDocuments(skippedActiveQuery),
+      this.smsModel.updateMany(clearQuery, {
+        $set: {
+          hiddenAt: new Date(),
+          'metadata.clearedFromHistoryAt': new Date(),
+        },
+      }),
+    ])
+
+    return {
+      success: true,
+      cleared: (result as any).modifiedCount || (result as any).nModified || 0,
+      skippedActive,
     }
   }
 

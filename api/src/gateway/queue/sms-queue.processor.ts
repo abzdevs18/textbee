@@ -82,6 +82,39 @@ export class SmsQueueProcessor {
     }
 
     try {
+      const deliverableFcmMessages = []
+      const skippedSmsIds: string[] = []
+      for (const fcmMessage of fcmMessages || []) {
+        try {
+          const smsData = JSON.parse(fcmMessage.data?.smsData || '{}')
+          const sms = await this.smsModel.findById(String(smsData.smsId))
+          if (
+            !sms ||
+            sms.status !== 'pending' ||
+            sms.device?.toString() !== String(deviceId)
+          ) {
+            skippedSmsIds.push(String(smsData.smsId || 'unknown'))
+            continue
+          }
+          deliverableFcmMessages.push(fcmMessage)
+        } catch (parseError) {
+          this.logger.warn(
+            `Skipping SMS job payload with invalid metadata in job ${job.id}`,
+          )
+        }
+      }
+
+      if (deliverableFcmMessages.length === 0) {
+        this.logger.warn(
+          `SMS job ${job.id} had no deliverable pending messages; skipped ${skippedSmsIds.length}`,
+        )
+        return {
+          successCount: 0,
+          failureCount: 0,
+          skippedCount: skippedSmsIds.length,
+        }
+      }
+
       this.smsBatchModel
         .findByIdAndUpdate(smsBatchId, {
           $set: { status: 'processing' },
@@ -95,7 +128,7 @@ export class SmsQueueProcessor {
           throw error
         })
 
-      const response = await firebaseAdmin.messaging().sendEach(fcmMessages)
+      const response = await firebaseAdmin.messaging().sendEach(deliverableFcmMessages)
 
       // this.logger.debug(
       //   `SMS Job ${job.id}( smsBatchId: ${smsBatchId}) completed, success: ${response.successCount}, failures: ${response.failureCount}`,
@@ -111,7 +144,7 @@ export class SmsQueueProcessor {
       for (let i = 0; i < response.responses.length; i++) {
         if (!response.responses[i].success) {
           try {
-            const smsData = JSON.parse(fcmMessages[i].data.smsData)
+            const smsData = JSON.parse(deliverableFcmMessages[i].data.smsData)
             const fcmError = response.responses[i].error
             failedSmsIds.push(String(smsData.smsId))
             failedUpdates.push({
@@ -134,7 +167,7 @@ export class SmsQueueProcessor {
       for (let i = 0; i < response.responses.length; i++) {
         if (response.responses[i].success) {
           try {
-            const smsData = JSON.parse(fcmMessages[i].data.smsData)
+            const smsData = JSON.parse(deliverableFcmMessages[i].data.smsData)
             dispatchedSmsIds.push(String(smsData.smsId))
           } catch (parseError) {
             this.logger.error(
@@ -226,7 +259,7 @@ export class SmsQueueProcessor {
 
       // Mark all individual SMS in this batch of FCM messages as failed
       const failedSmsIds: string[] = []
-      for (const fcmMessage of fcmMessages) {
+      for (const fcmMessage of fcmMessages || []) {
         try {
           const smsData = JSON.parse(fcmMessage.data.smsData)
           failedSmsIds.push(String(smsData.smsId))

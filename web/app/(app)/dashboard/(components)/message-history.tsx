@@ -634,13 +634,19 @@ function MessageCard({ message, type, device, onSelectMessage }) {
             <p className='text-sm max-w-sm md:max-w-none line-clamp-2'>{message.message}</p>
           </div>
 
-          <div className='flex justify-between items-center'>
-            {isSent && shouldShowStatus && (
-              <Badge variant='outline' className={`${statusBadge.color} flex items-center text-xs`}>
-                {statusBadge.icon}
-                {statusBadge.label}
+          <div className='flex flex-wrap justify-between items-center gap-2'>
+            <div className='flex flex-wrap items-center gap-2'>
+              {isSent && shouldShowStatus && (
+                <Badge variant='outline' className={`${statusBadge.color} flex items-center text-xs`}>
+                  {statusBadge.icon}
+                  {statusBadge.label}
+                </Badge>
+              )}
+              <Badge variant='outline' className='flex items-center gap-1 rounded-full bg-slate-50 text-xs text-slate-600 border-slate-200'>
+                <Smartphone className='h-3 w-3' />
+                Device used: {device ? formatDeviceName(device) : 'Unknown'}
               </Badge>
-            )}
+            </div>
           </div>
         </div>
       </CardContent>
