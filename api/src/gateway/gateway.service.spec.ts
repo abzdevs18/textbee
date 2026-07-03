@@ -469,6 +469,30 @@ describe('GatewayService', () => {
       ).rejects.toThrow(HttpException)
     })
 
+    it('should block sending when the device already has 5 active SMS', async () => {
+      mockSmsModel.countDocuments
+        .mockResolvedValueOnce(5)
+        .mockResolvedValueOnce(0)
+
+      await expect(
+        service.sendSMS(mockDeviceId, mockSmsInput),
+      ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS })
+      expect(mockBillingService.canPerformAction).not.toHaveBeenCalled()
+      expect(mockSmsBatchModel.create).not.toHaveBeenCalled()
+    })
+
+    it('should block sending when the device has 5 recent failed or unknown SMS', async () => {
+      mockSmsModel.countDocuments
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(5)
+
+      await expect(
+        service.sendSMS(mockDeviceId, mockSmsInput),
+      ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS })
+      expect(mockBillingService.canPerformAction).not.toHaveBeenCalled()
+      expect(mockSmsBatchModel.create).not.toHaveBeenCalled()
+    })
+
     it('should queue SMS if queue is enabled', async () => {
       mockSmsQueueService.isQueueEnabled.mockReturnValue(true)
       mockSmsQueueService.addSendSmsJob.mockResolvedValue(true)

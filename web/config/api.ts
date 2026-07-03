@@ -32,6 +32,7 @@ export const ApiEndpoints = {
     getReceivedSMS: (id: string) => `/gateway/devices/${id}/get-received-sms`,
     getMessages: (id: string) => `/gateway/devices/${id}/messages`,
     listAccountMessages: () => '/gateway/messages',
+    resendMessages: () => '/gateway/messages/resend',
     cancelMessage: (smsId: string) => `/gateway/messages/${smsId}/cancel`,
     rerouteMessage: (smsId: string) => `/gateway/messages/${smsId}/reroute`,
     clearMessages: () => '/gateway/messages',

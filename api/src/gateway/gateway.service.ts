@@ -43,6 +43,12 @@ type QueueRehydrateResult = {
   delayMs?: number
 }
 
+const DEVICE_SEND_COOLDOWN_LIMIT = 5
+const DEVICE_SEND_COOLDOWN_HOURS = 5
+const DEVICE_ACTIVE_SEND_STATUSES = ['pending', 'dispatched']
+const DEVICE_FAILED_SEND_STATUSES = ['failed', 'unknown']
+const RESENDABLE_BLOCKED_STATUSES = ['pending', 'dispatched']
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -256,6 +262,84 @@ export class GatewayService {
         $set: { status: 'partial_success', completedAt: new Date() },
       })
     }
+  }
+
+  private getDeviceIdString(device: any): string {
+    return device?._id?.toString?.() || device?.toString?.()
+  }
+
+  private getDeviceUserId(device: any): any {
+    return device?.user?._id || device?.user
+  }
+
+  private async getDeviceSendHealth(device: any): Promise<{
+    activeCount: number
+    recentIssueCount: number
+    limit: number
+    cooldownHours: number
+  }> {
+    const deviceId = this.getDeviceIdString(device)
+    const userId = this.getDeviceUserId(device)
+    const cooldownSince = new Date(
+      Date.now() - DEVICE_SEND_COOLDOWN_HOURS * 60 * 60 * 1000,
+    )
+
+    const baseQuery = {
+      ...(userId ? { user: userId } : {}),
+      device: deviceId,
+      type: SMSType.SENT,
+    }
+
+    const [activeCountRaw, recentIssueCountRaw] = await Promise.all([
+      this.smsModel.countDocuments({
+        ...baseQuery,
+        status: { $in: DEVICE_ACTIVE_SEND_STATUSES },
+      }),
+      this.smsModel.countDocuments({
+        ...baseQuery,
+        status: { $in: DEVICE_FAILED_SEND_STATUSES },
+        $or: [
+          { updatedAt: { $gte: cooldownSince } },
+          { failedAt: { $gte: cooldownSince } },
+          { createdAt: { $gte: cooldownSince } },
+        ],
+      }),
+    ])
+
+    return {
+      activeCount: Number(activeCountRaw) || 0,
+      recentIssueCount: Number(recentIssueCountRaw) || 0,
+      limit: DEVICE_SEND_COOLDOWN_LIMIT,
+      cooldownHours: DEVICE_SEND_COOLDOWN_HOURS,
+    }
+  }
+
+  private async assertDeviceCanAcceptSend(device: any): Promise<void> {
+    const health = await this.getDeviceSendHealth(device)
+    const activeBlocked = health.activeCount >= DEVICE_SEND_COOLDOWN_LIMIT
+    const issueBlocked = health.recentIssueCount >= DEVICE_SEND_COOLDOWN_LIMIT
+
+    if (!activeBlocked && !issueBlocked) {
+      return
+    }
+
+    const reason = activeBlocked
+      ? `Device already has ${health.activeCount} pending/dispatched SMS. Cancel, reroute, or let those finish before sending more to this device.`
+      : `Device has ${health.recentIssueCount} failed/unknown SMS in the last ${DEVICE_SEND_COOLDOWN_HOURS} hours. It is paused for safety.`
+
+    throw new HttpException(
+      {
+        success: false,
+        error: reason,
+        message: reason,
+        deviceId: this.getDeviceIdString(device),
+        activePendingOrDispatched: health.activeCount,
+        recentFailedOrUnknown: health.recentIssueCount,
+        cooldownLimit: health.limit,
+        cooldownHours: health.cooldownHours,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    )
   }
 
   // Blocks creating or re-enabling a device when the user's plan device limit
@@ -544,6 +628,8 @@ export class GatewayService {
       )
     }
 
+    await this.assertDeviceCanAcceptSend(device)
+
     await this.billingService.canPerformAction(
       device.user.toString(),
       'send_sms',
@@ -749,6 +835,8 @@ export class GatewayService {
         HttpStatus.BAD_REQUEST,
       )
     }
+
+    await this.assertDeviceCanAcceptSend(device)
 
     await this.billingService.canPerformAction(
       device.user.toString(),
@@ -1486,6 +1574,8 @@ export class GatewayService {
       )
     }
 
+    await this.assertDeviceCanAcceptSend(targetDevice)
+
     const removal = await this.smsQueueService.removeSmsFromWaitingJob(
       sms.queueJobId,
       smsId,
@@ -1548,6 +1638,195 @@ export class GatewayService {
       success: true,
       message: 'Pending SMS rerouted',
       data: updatedSms,
+    }
+  }
+
+  async resendMessages(
+    user: User,
+    smsIds: string[] = [],
+    targetDeviceId?: string,
+  ): Promise<{
+    success: true
+    resent: number
+    skipped: number
+    failed: number
+    results: Array<{
+      smsId: string
+      status: 'resent' | 'skipped' | 'failed'
+      reason?: string
+      targetDeviceId?: string
+      smsBatchId?: string
+    }>
+  }> {
+    const uniqueSmsIds = Array.from(
+      new Set(
+        (smsIds || [])
+          .map((smsId) => smsId?.toString?.().trim())
+          .filter(
+            (smsId): smsId is string =>
+              Boolean(smsId && Types.ObjectId.isValid(smsId)),
+          ),
+      ),
+    ).slice(0, 100)
+
+    if (uniqueSmsIds.length === 0) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'At least one valid smsId is required',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    let explicitTargetDevice: any = null
+    if (targetDeviceId && targetDeviceId !== 'original') {
+      if (!Types.ObjectId.isValid(targetDeviceId)) {
+        throw new HttpException(
+          {
+            success: false,
+            error: 'targetDeviceId is invalid',
+          },
+          HttpStatus.BAD_REQUEST,
+        )
+      }
+
+      explicitTargetDevice = await this.deviceModel.findById(targetDeviceId)
+      if (!explicitTargetDevice?.enabled) {
+        throw new HttpException(
+          {
+            success: false,
+            error: 'Target device does not exist or is not enabled',
+          },
+          HttpStatus.BAD_REQUEST,
+        )
+      }
+
+      if (
+        explicitTargetDevice.user?.toString() !==
+        getUserObjectId(user)?.toString()
+      ) {
+        throw new HttpException(
+          {
+            success: false,
+            error: 'Target device does not belong to this account',
+          },
+          HttpStatus.FORBIDDEN,
+        )
+      }
+    }
+
+    const messages = await this.smsModel
+      .find({
+        _id: { $in: uniqueSmsIds },
+        ...this.getMessageUserFilter(user),
+        type: SMSType.SENT,
+        ...this.buildVisibleMessageFilter(false),
+      })
+      .populate({
+        path: 'device',
+        select: '_id brand model buildId enabled name',
+      })
+      .lean()
+
+    const messagesById = new Map(
+      (messages || []).map((message: any) => [message._id?.toString(), message]),
+    )
+    const results: Array<{
+      smsId: string
+      status: 'resent' | 'skipped' | 'failed'
+      reason?: string
+      targetDeviceId?: string
+      smsBatchId?: string
+    }> = []
+
+    for (const smsId of uniqueSmsIds) {
+      const original = messagesById.get(smsId)
+      if (!original) {
+        results.push({
+          smsId,
+          status: 'skipped',
+          reason: 'SMS was not found or is not an outbound message for this account.',
+        })
+        continue
+      }
+
+      const normalizedStatus = String(original.status || '').toLowerCase()
+      if (RESENDABLE_BLOCKED_STATUSES.includes(normalizedStatus)) {
+        results.push({
+          smsId,
+          status: 'skipped',
+          reason: `SMS is still ${normalizedStatus}; cancel or reroute active sends instead of resending them.`,
+        })
+        continue
+      }
+
+      if (!original.message || !original.recipient) {
+        results.push({
+          smsId,
+          status: 'skipped',
+          reason: 'SMS does not have both message text and a recipient.',
+        })
+        continue
+      }
+
+      const originalDeviceId =
+        original.device?._id?.toString?.() || original.device?.toString?.()
+      const sendDeviceId = explicitTargetDevice
+        ? explicitTargetDevice._id.toString()
+        : originalDeviceId
+
+      if (!sendDeviceId) {
+        results.push({
+          smsId,
+          status: 'failed',
+          reason: 'Original device is missing. Choose another enabled device.',
+        })
+        continue
+      }
+
+      try {
+        const resendResult = await this.sendSMS(sendDeviceId, {
+          message: original.message,
+          recipients: [original.recipient],
+          smsBody: original.message,
+          receivers: [original.recipient],
+          ...(original.simSubscriptionId !== undefined && {
+            simSubscriptionId: original.simSubscriptionId,
+          }),
+        } as SendSMSInputDTO)
+
+        results.push({
+          smsId,
+          status: 'resent',
+          targetDeviceId: sendDeviceId,
+          smsBatchId: resendResult?.smsBatchId?.toString?.(),
+        })
+      } catch (error) {
+        const response = (error as any)?.response
+        results.push({
+          smsId,
+          status: 'failed',
+          targetDeviceId: sendDeviceId,
+          reason:
+            response?.error ||
+            response?.message ||
+            (error as any)?.message ||
+            'Unable to resend SMS',
+        })
+      }
+    }
+
+    const resent = results.filter((result) => result.status === 'resent').length
+    const skipped = results.filter((result) => result.status === 'skipped').length
+    const failed = results.filter((result) => result.status === 'failed').length
+
+    return {
+      success: true,
+      resent,
+      skipped,
+      failed,
+      results,
     }
   }
 

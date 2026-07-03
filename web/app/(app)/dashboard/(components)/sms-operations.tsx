@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   Loader2,
   MessageSquareText,
   RefreshCw,
+  RotateCcw,
   Search,
   Smartphone,
   Trash2,
@@ -31,6 +32,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -101,6 +103,15 @@ type MessageResponse = {
   summary: Record<string, number>
 }
 
+type ResendResponse = {
+  success: boolean
+  resent: number
+  skipped: number
+  failed: number
+}
+
+const EMPTY_MESSAGES: SmsMessage[] = []
+
 const statusOptions = [
   { value: 'pending', label: 'Pending' },
   { value: 'all', label: 'All statuses' },
@@ -144,6 +155,16 @@ const formatSmsDeviceName = (device?: SmsMessage['device']) => {
     model: device.model || 'device',
     name: device.name,
   })
+}
+
+const isResendableMessage = (message: SmsMessage) => {
+  const status = (message.status || '').toLowerCase()
+  const type = (message.type || '').toLowerCase()
+  return (
+    type !== 'received' &&
+    !['pending', 'dispatched'].includes(status) &&
+    Boolean(message.message && message.recipient)
+  )
 }
 
 const getStatusBadge = (status?: string) => {
@@ -200,6 +221,9 @@ export default function SmsOperations() {
   const [page, setPage] = useState(1)
   const [rerouteMessage, setRerouteMessage] = useState<SmsMessage | null>(null)
   const [targetDeviceId, setTargetDeviceId] = useState('')
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([])
+  const [resendDialogOpen, setResendDialogOpen] = useState(false)
+  const [resendTargetDeviceId, setResendTargetDeviceId] = useState('original')
 
   const { data: devices, isLoading: isLoadingDevices } = useQuery({
     queryKey: ['devices'],
@@ -316,7 +340,46 @@ export default function SmsOperations() {
     },
   })
 
-  const messages = messagesResponse?.data || []
+  const resendMutation = useMutation({
+    mutationFn: ({
+      smsIds,
+      targetDeviceId,
+    }: {
+      smsIds: string[]
+      targetDeviceId?: string
+    }) =>
+      httpBrowserClient.post(ApiEndpoints.gateway.resendMessages(), {
+        smsIds,
+        ...(targetDeviceId && targetDeviceId !== 'original'
+          ? { targetDeviceId }
+          : {}),
+      }),
+    onSuccess: (response) => {
+      const result = (response.data || {}) as ResendResponse
+      const resent = result.resent ?? 0
+      const skipped = result.skipped ?? 0
+      const failed = result.failed ?? 0
+
+      toast({
+        title: resent > 0 ? 'SMS resend queued.' : 'No SMS resent.',
+        description: `${resent} resent, ${skipped} skipped, ${failed} failed.`,
+        variant: resent === 0 && failed > 0 ? 'destructive' : undefined,
+      })
+      setResendDialogOpen(false)
+      setSelectedMessageIds([])
+      invalidateMessages()
+    },
+    onError: (error) => {
+      const formatted = formatError(error)
+      toast({
+        title: 'Unable to resend SMS.',
+        description: formatted.message,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const messages = messagesResponse?.data || EMPTY_MESSAGES
   const meta = messagesResponse?.meta || {
     page: 1,
     limit: 25,
@@ -325,6 +388,23 @@ export default function SmsOperations() {
   }
   const summary = messagesResponse?.summary || {}
   const deviceList = devices?.data || []
+  const visibleResendableIds = useMemo(
+    () => messages.filter(isResendableMessage).map((message) => message._id),
+    [messages],
+  )
+  const selectedVisibleCount = selectedMessageIds.filter((smsId) =>
+    visibleResendableIds.includes(smsId),
+  ).length
+  const allVisibleSelected =
+    visibleResendableIds.length > 0 &&
+    selectedVisibleCount === visibleResendableIds.length
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
+
+  useEffect(() => {
+    setSelectedMessageIds((current) =>
+      current.filter((smsId) => messages.some((message) => message._id === smsId)),
+    )
+  }, [messages])
 
   const handleApplySearch = () => {
     setPage(1)
@@ -334,6 +414,7 @@ export default function SmsOperations() {
   const handleFilterChange = (setter: (value: string) => void) => (value: string) => {
     setter(value)
     setPage(1)
+    setSelectedMessageIds([])
   }
 
   const openRerouteDialog = (message: SmsMessage) => {
@@ -342,6 +423,32 @@ export default function SmsOperations() {
       (device: any) => device.enabled && device._id !== message.device?._id,
     )
     setTargetDeviceId(fallbackDevice?._id || '')
+  }
+
+  const toggleVisibleSelection = (checked: boolean) => {
+    setSelectedMessageIds((current) => {
+      const currentSet = new Set(current)
+      if (checked) {
+        visibleResendableIds.forEach((smsId) => currentSet.add(smsId))
+      } else {
+        visibleResendableIds.forEach((smsId) => currentSet.delete(smsId))
+      }
+      return Array.from(currentSet)
+    })
+  }
+
+  const toggleMessageSelection = (smsId: string, checked: boolean) => {
+    setSelectedMessageIds((current) =>
+      checked
+        ? Array.from(new Set([...current, smsId]))
+        : current.filter((selectedId) => selectedId !== smsId),
+    )
+  }
+
+  const openResendDialog = (smsIds = selectedMessageIds) => {
+    setSelectedMessageIds(smsIds)
+    setResendTargetDeviceId('original')
+    setResendDialogOpen(true)
   }
 
   const pendingCount = summary.pending || 0
@@ -424,10 +531,25 @@ export default function SmsOperations() {
               </CardTitle>
               <p className='mt-1 text-sm text-slate-500'>
                 Cancel or reroute SMS only while they are still pending in the
-                queue. Dispatched messages have already reached the phone.
+                queue. Failed or unknown messages can be resent, and devices are
+                paused after 5 active or 5 recent failed/unknown sends.
               </p>
             </div>
             <div className='flex flex-wrap items-center gap-2'>
+              <Button
+                variant='outline'
+                className='rounded-lg border-[#3d8216]/30 text-[#3d8216] hover:bg-[#3d8216]/5'
+                disabled={selectedMessageIds.length === 0 || resendMutation.isPending}
+                onClick={() => openResendDialog()}
+              >
+                {resendMutation.isPending ? (
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                ) : (
+                  <RotateCcw className='mr-2 h-4 w-4' />
+                )}
+                Resend selected
+                {selectedMessageIds.length > 0 ? ` (${selectedMessageIds.length})` : ''}
+              </Button>
               <Button
                 variant='outline'
                 className='rounded-lg'
@@ -551,6 +673,22 @@ export default function SmsOperations() {
             <Table>
               <TableHeader>
                 <TableRow className='bg-slate-50'>
+                  <TableHead className='w-10 px-4'>
+                    <Checkbox
+                      aria-label='Select visible resendable SMS'
+                      checked={
+                        allVisibleSelected
+                          ? true
+                          : someVisibleSelected
+                            ? 'indeterminate'
+                            : false
+                      }
+                      disabled={visibleResendableIds.length === 0}
+                      onCheckedChange={(checked) =>
+                        toggleVisibleSelection(checked === true)
+                      }
+                    />
+                  </TableHead>
                   <TableHead className='px-4'>Message</TableHead>
                   <TableHead>Number</TableHead>
                   <TableHead>Status</TableHead>
@@ -562,13 +700,13 @@ export default function SmsOperations() {
               <TableBody>
                 {isLoadingMessages ? (
                   <TableRow>
-                    <TableCell colSpan={6} className='py-12 text-center'>
+                    <TableCell colSpan={7} className='py-12 text-center'>
                       <Loader2 className='mx-auto h-6 w-6 animate-spin text-muted-foreground' />
                     </TableCell>
                   </TableRow>
                 ) : messages.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className='py-12 text-center'>
+                    <TableCell colSpan={7} className='py-12 text-center'>
                       <div className='mx-auto flex max-w-sm flex-col items-center gap-2 text-slate-500'>
                         <History className='h-8 w-8 text-slate-300' />
                         <p className='text-sm font-medium text-slate-700'>
@@ -584,9 +722,21 @@ export default function SmsOperations() {
                   messages.map((message) => {
                     const badge = getStatusBadge(message.status)
                     const isPending = message.status === 'pending'
+                    const canResend = isResendableMessage(message)
+                    const isSelected = selectedMessageIds.includes(message._id)
                     const number = message.recipient || message.sender || '—'
                     return (
                       <TableRow key={message._id}>
+                        <TableCell className='px-4'>
+                          <Checkbox
+                            aria-label={`Select SMS ${number}`}
+                            checked={isSelected}
+                            disabled={!canResend}
+                            onCheckedChange={(checked) =>
+                              toggleMessageSelection(message._id, checked === true)
+                            }
+                          />
+                        </TableCell>
                         <TableCell className='max-w-[320px] px-4'>
                           <div className='space-y-1'>
                             <p className='line-clamp-2 text-sm text-slate-900'>
@@ -667,6 +817,15 @@ export default function SmsOperations() {
                             >
                               Reroute
                             </Button>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              className='rounded-lg border-[#3d8216]/30 text-[#3d8216] hover:bg-[#3d8216]/5'
+                              disabled={!canResend || resendMutation.isPending}
+                              onClick={() => openResendDialog([message._id])}
+                            >
+                              Resend
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -705,6 +864,74 @@ export default function SmsOperations() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={resendDialogOpen} onOpenChange={setResendDialogOpen}>
+        <DialogContent className='rounded-2xl'>
+          <DialogHeader>
+            <DialogTitle>Resend selected SMS</DialogTitle>
+            <DialogDescription>
+              This creates fresh outbound SMS records from the selected history
+              rows. Pending and dispatched messages are skipped automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-3'>
+            <div className='rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-900'>
+              <p className='font-medium'>
+                {selectedMessageIds.length} SMS selected for resend
+              </p>
+              <p className='mt-1 text-xs text-emerald-800'>
+                The server will pause any device that already has 5
+                pending/dispatched SMS, or 5 failed/unknown SMS in the last 5
+                hours.
+              </p>
+            </div>
+            <Select
+              value={resendTargetDeviceId}
+              onValueChange={setResendTargetDeviceId}
+            >
+              <SelectTrigger className='rounded-lg'>
+                <SelectValue placeholder='Choose resend device' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='original'>Original device from history</SelectItem>
+                {deviceList.map((device: any) => (
+                  <SelectItem
+                    key={device._id}
+                    value={device._id}
+                    disabled={!device.enabled}
+                  >
+                    {formatDeviceName(device)} {device.enabled ? '' : '(disabled)'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button
+              variant='outline'
+              className='rounded-lg'
+              onClick={() => setResendDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className='rounded-lg bg-[#3d8216] text-white hover:bg-[#2a5a10]'
+              disabled={selectedMessageIds.length === 0 || resendMutation.isPending}
+              onClick={() =>
+                resendMutation.mutate({
+                  smsIds: selectedMessageIds,
+                  targetDeviceId: resendTargetDeviceId,
+                })
+              }
+            >
+              {resendMutation.isPending && (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              )}
+              Resend SMS
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!rerouteMessage} onOpenChange={(open) => !open && setRerouteMessage(null)}>
         <DialogContent className='rounded-2xl'>

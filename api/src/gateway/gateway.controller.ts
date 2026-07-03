@@ -61,6 +61,20 @@ export class GatewayController {
   }
 
   @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Resend selected outbound SMS history records' })
+  @Post('/messages/resend')
+  async resendMessages(
+    @Body() body: { smsIds?: string[]; targetDeviceId?: string },
+    @Request() req,
+  ) {
+    return this.gatewayService.resendMessages(
+      req.user,
+      body?.smsIds || [],
+      body?.targetDeviceId,
+    )
+  }
+
+  @UseGuards(AuthGuard)
   @ApiOperation({ summary: 'Cancel a pending queued SMS before dispatch' })
   @Post('/messages/:smsId/cancel')
   async cancelPendingSms(
