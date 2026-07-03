@@ -128,6 +128,24 @@ export class GatewayService {
     return { user: getUserObjectId(user) }
   }
 
+  private getDeviceFilterValue(deviceId?: string): Types.ObjectId | undefined {
+    if (!deviceId || deviceId === 'all') {
+      return undefined
+    }
+
+    if (!Types.ObjectId.isValid(deviceId)) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'deviceId is invalid',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    return new Types.ObjectId(deviceId)
+  }
+
   private async assertMessageBelongsToUser(smsId: string, user: User): Promise<any> {
     const sms = await this.smsModel.findById(smsId)
     if (!sms) {
@@ -1327,14 +1345,15 @@ export class GatewayService {
     const page = this.coercePage(params.page, 1)
     const limit = this.coerceLimit(params.limit, 50)
     const skip = (page - 1) * limit
+    const deviceFilterValue = this.getDeviceFilterValue(params.deviceId)
 
     const query: any = {
       ...this.getMessageUserFilter(user),
       ...this.buildVisibleMessageFilter(params.includeHidden),
     }
 
-    if (params.deviceId && params.deviceId !== 'all') {
-      query.device = params.deviceId
+    if (deviceFilterValue) {
+      query.device = deviceFilterValue
     }
 
     if (params.type === 'sent') {
@@ -1360,7 +1379,7 @@ export class GatewayService {
     const summaryBaseQuery = {
       ...this.getMessageUserFilter(user),
       ...this.buildVisibleMessageFilter(params.includeHidden),
-      ...(params.deviceId && params.deviceId !== 'all' ? { device: params.deviceId } : {}),
+      ...(deviceFilterValue ? { device: deviceFilterValue } : {}),
       ...(params.type === 'sent'
         ? { type: SMSType.SENT }
         : params.type === 'received'
@@ -1834,13 +1853,14 @@ export class GatewayService {
     user: User,
     params: MessageListParams = {},
   ): Promise<{ success: true; cleared: number; skippedActive: number }> {
+    const deviceFilterValue = this.getDeviceFilterValue(params.deviceId)
     const baseQuery: any = {
       ...this.getMessageUserFilter(user),
       ...this.buildVisibleMessageFilter(false),
     }
 
-    if (params.deviceId && params.deviceId !== 'all') {
-      baseQuery.device = params.deviceId
+    if (deviceFilterValue) {
+      baseQuery.device = deviceFilterValue
     }
     if (params.type === 'sent') {
       baseQuery.type = SMSType.SENT

@@ -10,7 +10,7 @@ import { AuthService } from '../auth/auth.service'
 import { WebhookService } from '../webhook/webhook.service'
 import { BillingService } from '../billing/billing.service'
 import { SmsQueueService } from './queue/sms-queue.service'
-import { Model } from 'mongoose'
+import { Model, Types } from 'mongoose'
 import { ConfigModule } from '@nestjs/config'
 import { HttpException, HttpStatus } from '@nestjs/common'
 import * as firebaseAdmin from 'firebase-admin'
@@ -849,6 +849,71 @@ describe('GatewayService', () => {
       await expect(service.getMessages(mockDeviceId)).rejects.toThrow(
         HttpException,
       )
+    })
+  })
+
+  describe('getAccountMessages', () => {
+    const mockUserId = new Types.ObjectId().toString()
+    const mockDeviceId = new Types.ObjectId().toString()
+    const mockUser = {
+      _id: mockUserId,
+      name: 'Test User',
+      email: 'test@example.com',
+      password: 'password',
+      role: 'user',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as User
+    const mockSmsData = [
+      {
+        _id: new Types.ObjectId().toString(),
+        device: mockDeviceId,
+        message: 'Hello from device',
+        type: SMSType.SENT,
+        recipient: '+123456789',
+        status: 'unknown',
+        createdAt: new Date(),
+      },
+    ]
+
+    beforeEach(() => {
+      mockSmsModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockSmsData),
+        }),
+      })
+      mockSmsModel.countDocuments.mockResolvedValue(1)
+    })
+
+    it('should cast deviceId before filtering account messages', async () => {
+      const result = await service.getAccountMessages(mockUser, {
+        deviceId: mockDeviceId,
+        status: 'all',
+        type: 'all',
+        page: 1,
+        limit: 10,
+      })
+
+      const findQuery = (mockSmsModel.find as jest.Mock).mock.calls[0][0]
+      const countQuery = (mockSmsModel.countDocuments as jest.Mock).mock.calls[0][0]
+
+      expect(findQuery.user).toBe(mockUserId)
+      expect(findQuery.device).toBeInstanceOf(Types.ObjectId)
+      expect(findQuery.device.toString()).toBe(mockDeviceId)
+      expect(countQuery.device).toBeInstanceOf(Types.ObjectId)
+      expect(countQuery.device.toString()).toBe(mockDeviceId)
+      expect(result.data).toEqual(mockSmsData)
+    })
+
+    it('should reject invalid account message device filters', async () => {
+      await expect(
+        service.getAccountMessages(mockUser, {
+          deviceId: 'not-a-device-id',
+        }),
+      ).rejects.toMatchObject({ status: HttpStatus.BAD_REQUEST })
+
+      expect(mockSmsModel.find).not.toHaveBeenCalled()
+      expect(mockSmsModel.countDocuments).not.toHaveBeenCalled()
     })
   })
 

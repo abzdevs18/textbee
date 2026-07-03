@@ -221,7 +221,7 @@ const getStatusBadge = (status?: string) => {
 
 export default function SmsOperations() {
   const queryClient = useQueryClient()
-  const [status, setStatus] = useState('pending')
+  const [status, setStatus] = useState('all')
   const [type, setType] = useState('all')
   const [deviceId, setDeviceId] = useState('all')
   const [searchInput, setSearchInput] = useState('')
