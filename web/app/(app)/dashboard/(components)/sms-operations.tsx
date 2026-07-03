@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ArrowRightLeft,
+  CalendarDays,
   Check,
   Clock,
   History,
@@ -167,6 +168,13 @@ const isResendableMessage = (message: SmsMessage) => {
   )
 }
 
+const getDateBoundaryIso = (date: string, endOfDay = false) => {
+  if (!date) return undefined
+  const timestamp = endOfDay ? `${date}T23:59:59.999` : `${date}T00:00:00.000`
+  const parsed = new Date(timestamp)
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString()
+}
+
 const getStatusBadge = (status?: string) => {
   const normalized = (status || 'pending').toLowerCase()
   switch (normalized) {
@@ -218,6 +226,8 @@ export default function SmsOperations() {
   const [deviceId, setDeviceId] = useState('all')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [page, setPage] = useState(1)
   const [rerouteMessage, setRerouteMessage] = useState<SmsMessage | null>(null)
   const [targetDeviceId, setTargetDeviceId] = useState('')
@@ -241,8 +251,12 @@ export default function SmsOperations() {
     params.set('type', type)
     if (deviceId !== 'all') params.set('deviceId', deviceId)
     if (search.trim()) params.set('search', search.trim())
+    const from = getDateBoundaryIso(dateFrom)
+    const to = getDateBoundaryIso(dateTo, true)
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
     return params
-  }, [deviceId, page, search, status, type])
+  }, [dateFrom, dateTo, deviceId, page, search, status, type])
 
   const {
     data: messagesResponse,
@@ -408,11 +422,37 @@ export default function SmsOperations() {
 
   const handleApplySearch = () => {
     setPage(1)
+    setSelectedMessageIds([])
     setSearch(searchInput)
   }
 
   const handleFilterChange = (setter: (value: string) => void) => (value: string) => {
     setter(value)
+    setPage(1)
+    setSelectedMessageIds([])
+  }
+
+  const handleDateFromChange = (value: string) => {
+    setDateFrom(value)
+    if (dateTo && value && dateTo < value) {
+      setDateTo(value)
+    }
+    setPage(1)
+    setSelectedMessageIds([])
+  }
+
+  const handleDateToChange = (value: string) => {
+    setDateTo(value)
+    if (dateFrom && value && dateFrom > value) {
+      setDateFrom(value)
+    }
+    setPage(1)
+    setSelectedMessageIds([])
+  }
+
+  const clearDateRange = () => {
+    setDateFrom('')
+    setDateTo('')
     setPage(1)
     setSelectedMessageIds([])
   }
@@ -665,6 +705,50 @@ export default function SmsOperations() {
                 onClick={handleApplySearch}
               >
                 Search
+              </Button>
+            </div>
+          </div>
+
+          <div className='flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 lg:flex-row lg:items-center lg:justify-between'>
+            <div className='flex items-center gap-2 text-sm font-medium text-slate-700'>
+              <span className='flex h-8 w-8 items-center justify-center rounded-lg bg-white text-[#3d8216] shadow-sm'>
+                <CalendarDays className='h-4 w-4' />
+              </span>
+              Date range
+              {(dateFrom || dateTo) && (
+                <span className='text-xs font-normal text-slate-500'>
+                  Filtering by message time
+                </span>
+              )}
+            </div>
+            <div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:w-auto'>
+              <label className='space-y-1'>
+                <span className='text-xs font-medium text-slate-500'>From</span>
+                <input
+                  type='date'
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(event) => handleDateFromChange(event.target.value)}
+                  className='h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-all focus:border-[#1e6b20] focus:ring-4 focus:ring-green-500/10'
+                />
+              </label>
+              <label className='space-y-1'>
+                <span className='text-xs font-medium text-slate-500'>To</span>
+                <input
+                  type='date'
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(event) => handleDateToChange(event.target.value)}
+                  className='h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-all focus:border-[#1e6b20] focus:ring-4 focus:ring-green-500/10'
+                />
+              </label>
+              <Button
+                variant='outline'
+                className='mt-5 h-10 rounded-lg bg-white'
+                disabled={!dateFrom && !dateTo}
+                onClick={clearDateRange}
+              >
+                Clear dates
               </Button>
             </div>
           </div>
