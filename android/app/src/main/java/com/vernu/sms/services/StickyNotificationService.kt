@@ -15,7 +15,7 @@ import com.vernu.sms.helpers.SharedPreferenceHelper
 
 class StickyNotificationService : Service() {
     companion object {
-        private const val TAG = "StickyNotificationService"
+        private const val TAG = "StickyNotifService"
         private const val NOTIFICATION_CHANNEL_ID = "stickyNotificationChannel"
         private const val NOTIFICATION_ID = 1
     }

@@ -12,6 +12,7 @@ object ApiManagerKt {
         instance ?: synchronized(this) {
             instance ?: Retrofit.Builder()
                 .baseUrl(AppConstants.API_BASE_URL)
+                .client(LegacyTls.okHttpClient())
                 .addConverterFactory(GsonConverterFactory.create())
                 .build()
                 .create(GatewayApiServiceKt::class.java)

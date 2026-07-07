@@ -125,9 +125,9 @@ const GenerateApiKey = forwardRef<GenerateApiKeyHandle, GenerateApiKeyProps>(
             </DialogHeader>
 
             <div className='space-y-6'>
-              <div className='flex justify-center p-4 bg-muted dark:bg-white rounded-lg '>
+              <div className='flex justify-center rounded-lg bg-white p-6'>
                 {generatedApiKey?.data && (
-                  <QRCode value={generatedApiKey?.data} size={120} />
+                  <QRCode value={generatedApiKey?.data} size={220} level='M' />
                 )}
               </div>
 

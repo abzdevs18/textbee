@@ -24,7 +24,10 @@ class OnboardingActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val qrLauncher = registerForActivityResult(ScanContract()) { result ->
-            result?.contents?.let { scanned ->
+            val scanned = result?.contents
+            if (scanned.isNullOrBlank()) {
+                viewModel.onQrScanFailed()
+            } else {
                 viewModel.onQrScanned(scanned.trim())
             }
         }
@@ -37,8 +40,10 @@ class OnboardingActivity : ComponentActivity() {
                     viewModel = viewModel,
                     onScanQr = {
                         qrLauncher.launch(ScanOptions().apply {
-                            setPrompt("Scan the QR code from sms.gabay.online/dashboard")
+                            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            setPrompt("Center the QR code from sms.gabay.online/dashboard")
                             setBeepEnabled(true)
+                            setCameraId(0)
                             setOrientationLocked(false)
                         })
                     },

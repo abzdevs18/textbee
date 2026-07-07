@@ -23,7 +23,7 @@ public class ApiManager {
 
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl(AppConstants.API_BASE_URL)
-//                .client(httpClient.build())
+                .client(LegacyTls.okHttpClient())
                 .addConverterFactory(GsonConverterFactory.create())
                 .build();
         apiService = retrofit.create(GatewayApiService.class);

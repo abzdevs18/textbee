@@ -10,10 +10,10 @@ android {
     compileSdk 34
 
     defaultConfig {
-        minSdk 24
+        minSdk 22
         targetSdk 34
-        versionCode 24
-        versionName "2.8.6"
+        versionCode 32
+        versionName "2.8.14"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -30,7 +30,7 @@ android {
             storePassword "android"
             keyAlias "androiddebugkey"
             keyPassword "android"
-            // Keep JAR/v1 signing for legacy sideloaders that show parse errors on v2-only APKs.
+            // Keep JAR/v1 signing for legacy sideloaders on older Android devices.
             v1SigningEnabled true
             v2SigningEnabled true
         }

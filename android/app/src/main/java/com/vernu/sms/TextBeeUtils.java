@@ -28,6 +28,13 @@ public class TextBeeUtils {
         return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED;
     }
 
+    public static String getDeviceOsVersion() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Build.VERSION.BASE_OS != null && !Build.VERSION.BASE_OS.isEmpty()) {
+            return Build.VERSION.BASE_OS;
+        }
+        return "Android " + Build.VERSION.RELEASE;
+    }
+
     public static List<SubscriptionInfo> getAvailableSimSlots(Context context) {
 
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {

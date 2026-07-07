@@ -56,7 +56,7 @@
             android:layout_marginEnd="8dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_menu_edit"
-            android:tint="?attr/colorPrimary"
+            app:tint="?attr/colorPrimary"
             android:contentDescription="Edit rule" />
 
         <ImageButton
@@ -65,7 +65,7 @@
             android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_menu_delete"
-            android:tint="#F44336"
+            app:tint="#F44336"
             android:contentDescription="Delete rule" />
     </LinearLayout>
 </androidx.cardview.widget.CardView>

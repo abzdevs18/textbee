@@ -37,6 +37,18 @@ fun CredentialsScreen(
     var showApiKey by remember { mutableStateOf(false) }
     val tabs = listOf("Scan QR Code", "Enter Manually")
 
+    LaunchedEffect(state.isQrScanned, state.apiKey) {
+        if (state.isQrScanned && state.apiKey.isNotBlank()) {
+            onNext()
+        }
+    }
+
+    LaunchedEffect(state.qrScanFailed) {
+        if (state.qrScanFailed) {
+            selectedTab = 1
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -113,6 +125,23 @@ fun CredentialsScreen(
                     onApiKeyChange = { viewModel.setApiKey(it) },
                     onToggleVisibility = { showApiKey = !showApiKey }
                 )
+            }
+
+            state.errorMessage?.let { error ->
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))

@@ -43,7 +43,9 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import com.google.gson.Gson;
 import okhttp3.ResponseBody;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -136,7 +138,7 @@ public class MainActivity extends AppCompatActivity {
             registerDeviceBtn.setText("Update");
         }
 
-        String[] missingPermissions = Arrays.stream(AppConstants.requiredPermissions).filter(permission -> !TextBeeUtils.isPermissionGranted(mContext, permission)).toArray(String[]::new);
+        String[] missingPermissions = getMissingPermissions(AppConstants.requiredPermissions);
         if (missingPermissions.length == 0) {
             grantSMSPermissionBtn.setEnabled(false);
             grantSMSPermissionBtn.setText("Permission Granted");
@@ -346,7 +348,7 @@ public class MainActivity extends AppCompatActivity {
             defaultSimSlotRadioGroup.addView(defaultSimSlotRadioBtn);
             
             // Create radio buttons for each SIM with proper styling
-            TextBeeUtils.getAvailableSimSlots(mContext).forEach(subscriptionInfo -> {
+            for (android.telephony.SubscriptionInfo subscriptionInfo : TextBeeUtils.getAvailableSimSlots(mContext)) {
                 String displayName = subscriptionInfo.getDisplayName() != null ? subscriptionInfo.getDisplayName().toString() : "Unknown";
                 String simInfo = displayName + " (Subscription ID: " + subscriptionInfo.getSubscriptionId() + ")";
                 RadioButton radioButton = new RadioButton(mContext);
@@ -354,7 +356,7 @@ public class MainActivity extends AppCompatActivity {
                 radioButton.setId(subscriptionInfo.getSubscriptionId());
                 applyRadioButtonStyle(radioButton);
                 defaultSimSlotRadioGroup.addView(radioButton);
-            });
+            }
 
             // Check the preferred SIM based on saved preferences
             int preferredSim = SharedPreferenceHelper.getSharedPreferenceInt(mContext, AppConstants.SHARED_PREFS_PREFERRED_SIM_KEY, -1);
@@ -464,7 +466,7 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode != PERMISSION_REQUEST_CODE) {
             return;
         }
-        boolean allPermissionsGranted = Arrays.stream(permissions).allMatch(permission -> TextBeeUtils.isPermissionGranted(mContext, permission));
+        boolean allPermissionsGranted = arePermissionsGranted(permissions);
         if (allPermissionsGranted) {
             Snackbar.make(findViewById(R.id.grantSMSPermissionBtn), "All Permissions Granted", Snackbar.LENGTH_SHORT).show();
             grantSMSPermissionBtn.setEnabled(false);
@@ -501,7 +503,7 @@ public class MainActivity extends AppCompatActivity {
                     registerDeviceInput.setManufacturer(Build.MANUFACTURER);
                     registerDeviceInput.setModel(Build.MODEL);
                     registerDeviceInput.setBuildId(Build.ID);
-                    registerDeviceInput.setOs(Build.VERSION.BASE_OS);
+                    registerDeviceInput.setOs(TextBeeUtils.getDeviceOsVersion());
                     registerDeviceInput.setAppVersionCode(BuildConfig.VERSION_CODE);
                     registerDeviceInput.setAppVersionName(BuildConfig.VERSION_NAME);
                     
@@ -680,7 +682,7 @@ public class MainActivity extends AppCompatActivity {
                     updateDeviceInput.setManufacturer(Build.MANUFACTURER);
                     updateDeviceInput.setModel(Build.MODEL);
                     updateDeviceInput.setBuildId(Build.ID);
-                    updateDeviceInput.setOs(Build.VERSION.BASE_OS);
+                    updateDeviceInput.setOs(TextBeeUtils.getDeviceOsVersion());
                     updateDeviceInput.setAppVersionCode(BuildConfig.VERSION_CODE);
                     updateDeviceInput.setAppVersionName(BuildConfig.VERSION_NAME);
 
@@ -763,14 +765,33 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void handleRequestPermissions(View view) {
-        boolean allPermissionsGranted = Arrays.stream(AppConstants.requiredPermissions).allMatch(permission -> TextBeeUtils.isPermissionGranted(mContext, permission));
+        boolean allPermissionsGranted = arePermissionsGranted(AppConstants.requiredPermissions);
         if (allPermissionsGranted) {
             Snackbar.make(view, "Already got permissions", Snackbar.LENGTH_SHORT).show();
             return;
         }
-        String[] permissionsToRequest = Arrays.stream(AppConstants.requiredPermissions).filter(permission -> !TextBeeUtils.isPermissionGranted(mContext, permission)).toArray(String[]::new);
+        String[] permissionsToRequest = getMissingPermissions(AppConstants.requiredPermissions);
         Snackbar.make(view, "Please Grant Required Permissions to continue", Snackbar.LENGTH_SHORT).show();
         ActivityCompat.requestPermissions(this, permissionsToRequest, PERMISSION_REQUEST_CODE);
+    }
+
+    private boolean arePermissionsGranted(String[] permissions) {
+        for (String permission : permissions) {
+            if (!TextBeeUtils.isPermissionGranted(mContext, permission)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String[] getMissingPermissions(String[] permissions) {
+        List<String> missingPermissions = new ArrayList<>();
+        for (String permission : permissions) {
+            if (!TextBeeUtils.isPermissionGranted(mContext, permission)) {
+                missingPermissions.add(permission);
+            }
+        }
+        return missingPermissions.toArray(new String[0]);
     }
 
     @Override

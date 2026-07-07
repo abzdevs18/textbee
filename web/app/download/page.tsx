@@ -15,14 +15,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 
 const androidRelease = {
-  version: '2.8.6',
-  versionCode: 24,
-  releasedAt: 'July 3, 2026',
-  minimumAndroid: 'Android 7.0+',
-  fileName: 'gabay-sms-2.8.6.apk',
-  fileSize: '13.72 MB',
-  downloadUrl: '/downloads/gabay-sms-2.8.6.apk',
-  sha256: '2AEFD43898BFBC57978576FB2298A5ACB6D5E3D0B96F6AB89AD84EFF00A82B36',
+  version: '2.8.15',
+  versionCode: 33,
+  releasedAt: 'July 7, 2026',
+  minimumAndroid: 'Android 5.1+',
+  fileName: 'gabay-sms-2.8.15.apk',
+  fileSize: '13.80 MB',
+  downloadUrl: '/downloads/gabay-sms-2.8.15.apk',
+  sha256: 'F61EA7AE5E79E754739D1636071996C6E4A8D901EEAD485CB6D578D888F45190',
 }
 
 const installationSteps = [
@@ -146,7 +146,7 @@ export default function DownloadPage() {
             </h2>
             <ul className='mt-5 space-y-3 text-sm text-slate-600 dark:text-slate-300'>
               {[
-                'Android 7.0 (Nougat) or newer',
+                'Android 5.1 (Lollipop MR1) or newer',
                 'An active SIM with SMS capability',
                 'Internet access for API communication',
                 'Background operation allowed for reliable delivery',
