@@ -8,6 +8,7 @@ import android.telephony.SmsManager
 import android.util.Log
 import com.vernu.sms.AppConstants
 import com.vernu.sms.dtos.SMSDTO
+import com.vernu.sms.helpers.SimFailoverManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.workers.SMSStatusUpdateWorker
 import java.lang.reflect.Modifier
@@ -17,6 +18,8 @@ class SMSStatusReceiver : BroadcastReceiver() {
         private const val TAG = "SMSStatusReceiver"
         const val SMS_SENT = "SMS_SENT"
         const val SMS_DELIVERED = "SMS_DELIVERED"
+        const val EXTRA_REQUESTED_SIM_SUBSCRIPTION_ID = "requested_sim_subscription_id"
+        const val EXTRA_RESOLVED_SIM_SUBSCRIPTION_ID = "resolved_sim_subscription_id"
 
         private fun getResultCodeName(resultCode: Int): String? {
             for (clazz in arrayOf<Class<*>>(SmsManager::class.java, Activity::class.java)) {
@@ -39,6 +42,10 @@ class SMSStatusReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val smsId = intent.getStringExtra("sms_id")
         val smsBatchId = intent.getStringExtra("sms_batch_id")
+        val requestedSimSubscriptionId = intent.getIntExtra(EXTRA_REQUESTED_SIM_SUBSCRIPTION_ID, -1)
+            .takeIf { it != -1 }
+        val resolvedSimSubscriptionId = intent.getIntExtra(EXTRA_RESOLVED_SIM_SUBSCRIPTION_ID, -1)
+            .takeIf { it != -1 }
 
         val smsDTO = SMSDTO().apply {
             this.smsId = smsId
@@ -46,17 +53,35 @@ class SMSStatusReceiver : BroadcastReceiver() {
         }
 
         when (intent.action) {
-            SMS_SENT -> handleSentStatus(context, intent, resultCode, smsDTO)
+            SMS_SENT -> handleSentStatus(
+                context,
+                intent,
+                resultCode,
+                smsDTO,
+                requestedSimSubscriptionId,
+                resolvedSimSubscriptionId
+            )
             SMS_DELIVERED -> handleDeliveredStatus(context, resultCode, smsDTO)
         }
     }
 
-    private fun handleSentStatus(context: Context, intent: Intent, resultCode: Int, smsDTO: SMSDTO) {
+    private fun handleSentStatus(
+        context: Context,
+        intent: Intent,
+        resultCode: Int,
+        smsDTO: SMSDTO,
+        requestedSimSubscriptionId: Int?,
+        resolvedSimSubscriptionId: Int?
+    ) {
         val timestamp = System.currentTimeMillis()
+        var sendFailed = false
         when (resultCode) {
             Activity.RESULT_OK -> {
                 smsDTO.status = "SENT"
                 smsDTO.sentAtInMillis = timestamp
+                SimFailoverManager.recordSendSuccess(
+                    context, resolvedSimSubscriptionId ?: requestedSimSubscriptionId, smsDTO.smsBatchId
+                )
                 Log.d(TAG, "SMS sent successfully - ID: ${smsDTO.smsId}")
             }
             SmsManager.RESULT_ERROR_GENERIC_FAILURE -> {
@@ -64,27 +89,59 @@ class SMSStatusReceiver : BroadcastReceiver() {
                 var msg = "SMS failed on device. Common causes: no SMS credit on SIM, weak signal, or carrier blocked. Check SIM balance and signal, then try again."
                 if (radioCode != -1) msg += " (code $radioCode)"
                 setFailed(smsDTO, timestamp, resultCode, msg)
+                sendFailed = true
                 Log.e(TAG, "SMS failed to send - ID: ${smsDTO.smsId}, Error code: $resultCode, Error: $msg")
             }
-            SmsManager.RESULT_ERROR_RADIO_OFF -> setFailed(smsDTO, timestamp, resultCode,
-                "Mobile radio is off (e.g. airplane mode). Turn off airplane mode and ensure cellular is on.")
-            SmsManager.RESULT_ERROR_NULL_PDU -> setFailed(smsDTO, timestamp, resultCode,
-                "Message could not be sent; invalid format or carrier issue. Try a shorter message or different recipient.")
-            SmsManager.RESULT_ERROR_NO_SERVICE -> setFailed(smsDTO, timestamp, resultCode,
-                "No cellular service. Check signal and try again when you have coverage.")
-            SmsManager.RESULT_ERROR_LIMIT_EXCEEDED -> setFailed(smsDTO, timestamp, resultCode,
-                "Device/carrier send limit reached (too many SMS in a short time). Wait a few minutes or lower the send rate.")
-            SmsManager.RESULT_ERROR_SHORT_CODE_NOT_ALLOWED -> setFailed(smsDTO, timestamp, resultCode,
-                "Short code not allowed on this carrier. Use a full phone number.")
-            SmsManager.RESULT_ERROR_SHORT_CODE_NEVER_ALLOWED -> setFailed(smsDTO, timestamp, resultCode,
-                "Short codes are not supported on this carrier. Use a full phone number.")
-            SmsManager.RESULT_NETWORK_ERROR -> setFailed(smsDTO, timestamp, resultCode,
-                "Network error while sending. Check signal and try again.")
+            SmsManager.RESULT_ERROR_RADIO_OFF -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "Mobile radio is off (e.g. airplane mode). Turn off airplane mode and ensure cellular is on.")
+                sendFailed = true
+            }
+            SmsManager.RESULT_ERROR_NULL_PDU -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "Message could not be sent; invalid format or carrier issue. Try a shorter message or different recipient.")
+                sendFailed = true
+            }
+            SmsManager.RESULT_ERROR_NO_SERVICE -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "No cellular service. Check signal and try again when you have coverage.")
+                sendFailed = true
+            }
+            SmsManager.RESULT_ERROR_LIMIT_EXCEEDED -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "Device/carrier send limit reached (too many SMS in a short time). Wait a few minutes or lower the send rate.")
+                sendFailed = true
+            }
+            SmsManager.RESULT_ERROR_SHORT_CODE_NOT_ALLOWED -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "Short code not allowed on this carrier. Use a full phone number.")
+                sendFailed = true
+            }
+            SmsManager.RESULT_ERROR_SHORT_CODE_NEVER_ALLOWED -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "Short codes are not supported on this carrier. Use a full phone number.")
+                sendFailed = true
+            }
+            SmsManager.RESULT_NETWORK_ERROR -> {
+                setFailed(smsDTO, timestamp, resultCode,
+                    "Network error while sending. Check signal and try again.")
+                sendFailed = true
+            }
             else -> {
                 val msg = getResultCodeName(resultCode) ?: "Unknown error (code $resultCode)"
                 setFailed(smsDTO, timestamp, resultCode, msg)
+                sendFailed = true
                 Log.e(TAG, "SMS failed to send - ID: ${smsDTO.smsId}, Error: $msg")
             }
+        }
+        if (sendFailed) {
+            SimFailoverManager.recordSendFailure(
+                context,
+                requestedSimSubscriptionId,
+                resolvedSimSubscriptionId,
+                smsDTO.smsBatchId,
+                smsDTO.smsId
+            )
         }
         updateSMSStatus(context, smsDTO)
     }

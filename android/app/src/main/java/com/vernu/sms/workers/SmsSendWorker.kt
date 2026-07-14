@@ -6,6 +6,7 @@ import androidx.work.*
 import com.vernu.sms.AppConstants
 import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.helpers.SMSHelper
+import com.vernu.sms.helpers.SimFailoverManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
 
 class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(context, workerParams) {
@@ -56,10 +57,19 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
         }
 
         val context = applicationContext
-        val resolvedSim = resolveSim(context, simSubscriptionId)
+        val requestedSim = resolveRequestedSim(context, simSubscriptionId)
+        val resolvedSim = SimFailoverManager.resolveSendSim(context, requestedSim, smsBatchId)
 
         if (resolvedSim != null) {
-            SMSHelper.sendSMSFromSpecificSim(phone, message, resolvedSim, smsId, smsBatchId ?: "", context)
+            SMSHelper.sendSMSFromSpecificSim(
+                phone,
+                message,
+                resolvedSim,
+                smsId,
+                smsBatchId ?: "",
+                context,
+                requestedSim
+            )
         } else {
             SMSHelper.sendSMS(phone, message, smsId, smsBatchId ?: "", context)
         }
@@ -80,7 +90,7 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
         return Result.success()
     }
 
-    private fun resolveSim(context: Context, backendSimId: Int): Int? {
+    private fun resolveRequestedSim(context: Context, backendSimId: Int): Int? {
         if (backendSimId != -1 && TextBeeUtils.isValidSubscriptionId(context, backendSimId)) {
             Log.d(TAG, "Using backend-provided SIM subscription ID: $backendSimId")
             return backendSimId
