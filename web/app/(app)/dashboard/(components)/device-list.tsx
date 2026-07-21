@@ -13,6 +13,8 @@ import {
   Loader2,
   MoreVertical,
   TriangleAlert,
+  Power,
+  PowerOff,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
@@ -34,9 +36,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { formatDeviceName } from '@/lib/utils'
+import { formatError } from '@/lib/utils/errorHandler'
 import GenerateApiKey, {
   type GenerateApiKeyHandle,
 } from './generate-api-key'
@@ -59,6 +65,9 @@ export default function DeviceList() {
     useState(false)
   const [devicePendingDelete, setDevicePendingDelete] =
     useState<DeviceRow | null>(null)
+  const [devicePendingDisable, setDevicePendingDisable] =
+    useState<DeviceRow | null>(null)
+  const [togglingDeviceId, setTogglingDeviceId] = useState<string | null>(null)
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const {
@@ -92,6 +101,41 @@ export default function DeviceList() {
     deviceLimit >= 2 && !isPending && activeDeviceCount === deviceLimit - 1
 
   const {
+    mutate: setDeviceEnabled,
+    isPending: isUpdatingDeviceEnabled,
+  } = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      httpBrowserClient.patch(ApiEndpoints.gateway.updateDevice(id), {
+        enabled,
+      }),
+    onMutate: ({ id }) => {
+      setTogglingDeviceId(id)
+    },
+    onSuccess: (_data, variables) => {
+      setDevicePendingDisable(null)
+      setTogglingDeviceId(null)
+      toast({
+        title: variables.enabled ? 'Gateway enabled' : 'Gateway disabled',
+        description: variables.enabled
+          ? 'This device can send and receive SMS again.'
+          : 'This device will not send or claim SMS until re-enabled.',
+      })
+      void queryClient.invalidateQueries({ queryKey: ['devices'] })
+      void queryClient.invalidateQueries({ queryKey: ['stats'] })
+      void queryClient.invalidateQueries({ queryKey: ['currentSubscription'] })
+    },
+    onError: (err: unknown) => {
+      setTogglingDeviceId(null)
+      const { message } = formatError(err)
+      toast({
+        variant: 'destructive',
+        title: 'Could not update device',
+        description: message,
+      })
+    },
+  })
+
+  const {
     mutate: deleteDevice,
     isPending: isDeletingDevice,
   } = useMutation({
@@ -105,13 +149,7 @@ export default function DeviceList() {
       void queryClient.invalidateQueries({ queryKey: ['devices'] })
     },
     onError: (err: unknown) => {
-      const message =
-        err &&
-        typeof err === 'object' &&
-        'message' in err &&
-        typeof (err as { message: unknown }).message === 'string'
-          ? (err as { message: string }).message
-          : 'Something went wrong'
+      const { message } = formatError(err)
       toast({
         variant: 'destructive',
         title: 'Error removing device',
@@ -241,27 +279,73 @@ export default function DeviceList() {
                           </Badge>
                         )}
                         <Badge
-                          variant={
-                            device.status === 'online' ? 'default' : 'secondary'
+                          variant={device.enabled ? 'default' : 'secondary'}
+                          className={
+                            device.enabled
+                              ? 'text-xs bg-emerald-600 hover:bg-emerald-600'
+                              : 'text-xs'
                           }
-                          className='text-xs'
                         >
                           {device.enabled ? 'Enabled' : 'Disabled'}
                         </Badge>
                       </div>
                     </div>
-                    <div className='flex items-center space-x-2 mt-1'>
-                      <code className='relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs'>
-                        {device._id}
-                      </code>
-                      <Button
-                        variant='ghost'
-                        size='icon'
-                        className='h-6 w-6'
-                        onClick={() => handleCopyId(device._id)}
-                      >
-                        <Copy className='h-3 w-3' />
-                      </Button>
+                    <div className='mt-2 flex flex-wrap items-center gap-3'>
+                      <div className='flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5'>
+                        <Switch
+                          id={`gateway-switch-${device._id}`}
+                          checked={!!device.enabled}
+                          disabled={
+                            isUpdatingDeviceEnabled &&
+                            togglingDeviceId === device._id
+                          }
+                          onCheckedChange={(checked) => {
+                            if (!checked) {
+                              setDevicePendingDisable(device as DeviceRow)
+                              return
+                            }
+                            // Re-enable immediately; server enforces device limit
+                            setDeviceEnabled({
+                              id: device._id,
+                              enabled: true,
+                            })
+                          }}
+                          aria-label={
+                            device.enabled
+                              ? 'Disable gateway for this device'
+                              : 'Enable gateway for this device'
+                          }
+                        />
+                        <Label
+                          htmlFor={`gateway-switch-${device._id}`}
+                          className='cursor-pointer text-xs font-medium text-muted-foreground'
+                        >
+                          {isUpdatingDeviceEnabled &&
+                          togglingDeviceId === device._id ? (
+                            <span className='inline-flex items-center gap-1'>
+                              <Loader2 className='h-3 w-3 animate-spin' />
+                              Updating…
+                            </span>
+                          ) : device.enabled ? (
+                            'Gateway on'
+                          ) : (
+                            'Gateway off'
+                          )}
+                        </Label>
+                      </div>
+                      <div className='flex items-center space-x-2'>
+                        <code className='relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs'>
+                          {device._id}
+                        </code>
+                        <Button
+                          variant='ghost'
+                          size='icon'
+                          className='h-6 w-6'
+                          onClick={() => handleCopyId(device._id)}
+                        >
+                          <Copy className='h-3 w-3' />
+                        </Button>
+                      </div>
                     </div>
                     <div className='flex items-center mt-1 space-x-3 text-xs text-muted-foreground'>
                       <div className='flex items-center'>
@@ -322,6 +406,33 @@ export default function DeviceList() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
+                      {device.enabled ? (
+                        <DropdownMenuItem
+                          onClick={() =>
+                            setDevicePendingDisable(device as DeviceRow)
+                          }
+                        >
+                          <PowerOff className='mr-2 h-4 w-4' />
+                          Disable gateway
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem
+                          onClick={() =>
+                            setDeviceEnabled({
+                              id: device._id,
+                              enabled: true,
+                            })
+                          }
+                          disabled={
+                            isUpdatingDeviceEnabled &&
+                            togglingDeviceId === device._id
+                          }
+                        >
+                          <Power className='mr-2 h-4 w-4' />
+                          Enable gateway
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem
                         className='text-destructive focus:text-destructive'
                         onClick={() =>
@@ -399,6 +510,51 @@ export default function DeviceList() {
                 Continue
               </Button>
             </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!devicePendingDisable}
+        onOpenChange={(open) => {
+          if (!open && !isUpdatingDeviceEnabled) setDevicePendingDisable(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disable gateway?</DialogTitle>
+            <DialogDescription>
+              {devicePendingDisable
+                ? `${formatDeviceName(devicePendingDisable)} will stop sending and claiming SMS. The phone stays registered — you can re-enable it anytime from this page.`
+                : 'This device will stop sending and claiming SMS until you re-enable it.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant='outline'
+              onClick={() => setDevicePendingDisable(null)}
+              disabled={isUpdatingDeviceEnabled}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant='default'
+              onClick={() =>
+                devicePendingDisable &&
+                setDeviceEnabled({
+                  id: devicePendingDisable._id,
+                  enabled: false,
+                })
+              }
+              disabled={isUpdatingDeviceEnabled}
+            >
+              {isUpdatingDeviceEnabled ? (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              ) : (
+                <PowerOff className='mr-2 h-4 w-4' />
+              )}
+              Disable gateway
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
