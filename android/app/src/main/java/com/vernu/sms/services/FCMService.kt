@@ -26,6 +26,8 @@ import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.MessageSyncNotifier
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.models.SMSPayload
+import com.vernu.sms.helpers.SMSHelper
+import com.vernu.sms.workers.OutboxClaimWorker
 import com.vernu.sms.workers.SmsSendWorker
 import retrofit2.Call
 import retrofit2.Callback
@@ -50,6 +52,13 @@ class FCMService : FirebaseMessagingService() {
                 return
             }
 
+            // Central outbox: free devices pull work when notified
+            if (messageType == "work_available") {
+                Log.d(TAG, "Received work_available — claiming outbox SMS")
+                OutboxClaimWorker.enqueue(this)
+                return
+            }
+
             val smsDataJson = remoteMessage.data["smsData"]
             if (smsDataJson == null) {
                 Log.e(TAG, "FCM data message is missing smsData")
@@ -64,6 +73,18 @@ class FCMService : FirebaseMessagingService() {
             if (!isForThisDevice(targetDeviceId, smsPayload.smsId)) {
                 return
             }
+
+            // Never send expired SMS (2h hard cancel policy)
+            if (isPayloadExpired(smsPayload.expiresAt)) {
+                Log.w(TAG, "Ignoring expired SMS command ${smsPayload.smsId}")
+                val id = smsPayload.smsId
+                val batch = smsPayload.smsBatchId ?: ""
+                if (!id.isNullOrBlank()) {
+                    SMSHelper.reportExpired(this, id, batch)
+                }
+                return
+            }
+
             Log.d(
                 TAG,
                 "Parsed SMS command: id=${smsPayload.smsId}, recipients=${smsPayload.recipients?.size ?: 0}"
@@ -138,7 +159,8 @@ class FCMService : FirebaseMessagingService() {
         for (recipient in recipients) {
             SmsSendWorker.enqueue(
                 this, recipient, smsPayload.message ?: "",
-                smsPayload.smsId, smsPayload.smsBatchId, smsPayload.simSubscriptionId
+                smsPayload.smsId, smsPayload.smsBatchId, smsPayload.simSubscriptionId,
+                smsPayload.expiresAt
             )
         }
 
@@ -187,6 +209,30 @@ class FCMService : FirebaseMessagingService() {
                     Log.e(TAG, "Error updating FCM token: ${t.message}")
                 }
             })
+    }
+
+    private fun isPayloadExpired(expiresAt: String?): Boolean {
+        if (expiresAt.isNullOrBlank()) return false
+        return try {
+            val patterns = arrayOf(
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+                "yyyy-MM-dd'T'HH:mm:ssX"
+            )
+            for (pattern in patterns) {
+                try {
+                    val sdf = java.text.SimpleDateFormat(pattern, java.util.Locale.US)
+                    sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    val date = sdf.parse(expiresAt) ?: continue
+                    return System.currentTimeMillis() > date.time
+                } catch (_: Exception) {
+                }
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun sendNotification(title: String, messageBody: String) {

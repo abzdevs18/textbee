@@ -24,6 +24,16 @@ import { WebhookEvent } from '../webhook/webhook-event.enum'
 import { WebhookService } from '../webhook/webhook.service'
 import { BillingService } from '../billing/billing.service'
 import { SmsQueueService } from './queue/sms-queue.service'
+import { SmsOutboxService } from './sms-outbox.service'
+import {
+  DEVICE_FAILURE_COOLDOWN_MINUTES,
+  DEVICE_FAILURE_THRESHOLD,
+  DEVICE_FAILED_SEND_STATUSES,
+  DEVICE_IN_FLIGHT_STATUSES,
+  DEVICE_MAX_IN_FLIGHT,
+  RESENDABLE_BLOCKED_STATUSES,
+  SMS_MAX_ATTEMPTS,
+} from './sms-delivery.constants'
 
 type MessageListParams = {
   page?: number
@@ -43,11 +53,9 @@ type QueueRehydrateResult = {
   delayMs?: number
 }
 
-const DEVICE_SEND_COOLDOWN_LIMIT = 5
-const DEVICE_SEND_COOLDOWN_HOURS = 5
-const DEVICE_ACTIVE_SEND_STATUSES = ['pending', 'dispatched']
-const DEVICE_FAILED_SEND_STATUSES = ['failed', 'unknown']
-const RESENDABLE_BLOCKED_STATUSES = ['pending', 'dispatched']
+/** @deprecated use DEVICE_MAX_IN_FLIGHT / DEVICE_FAILURE_THRESHOLD */
+const DEVICE_SEND_COOLDOWN_LIMIT = DEVICE_MAX_IN_FLIGHT
+const DEVICE_ACTIVE_SEND_STATUSES = DEVICE_IN_FLIGHT_STATUSES
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -69,6 +77,7 @@ export class GatewayService {
     private webhookService: WebhookService,
     private billingService: BillingService,
     private smsQueueService: SmsQueueService,
+    private smsOutboxService: SmsOutboxService,
   ) {}
 
   private buildVisibleMessageFilter(includeHidden = false): Record<string, any> {
@@ -294,56 +303,41 @@ export class GatewayService {
     activeCount: number
     recentIssueCount: number
     limit: number
-    cooldownHours: number
+    failureThreshold: number
+    cooldownMinutes: number
   }> {
     const deviceId = this.getDeviceIdString(device)
     const userId = this.getDeviceUserId(device)
-    const cooldownSince = new Date(
-      Date.now() - DEVICE_SEND_COOLDOWN_HOURS * 60 * 60 * 1000,
+    const summary = await this.smsOutboxService.getDeviceHealthSummary(
+      deviceId,
+      userId,
     )
 
-    const baseQuery = {
-      ...(userId ? { user: userId } : {}),
-      device: deviceId,
-      type: SMSType.SENT,
-    }
-
-    const [activeCountRaw, recentIssueCountRaw] = await Promise.all([
-      this.smsModel.countDocuments({
-        ...baseQuery,
-        status: { $in: DEVICE_ACTIVE_SEND_STATUSES },
-      }),
-      this.smsModel.countDocuments({
-        ...baseQuery,
-        status: { $in: DEVICE_FAILED_SEND_STATUSES },
-        $or: [
-          { updatedAt: { $gte: cooldownSince } },
-          { failedAt: { $gte: cooldownSince } },
-          { createdAt: { $gte: cooldownSince } },
-        ],
-      }),
-    ])
-
     return {
-      activeCount: Number(activeCountRaw) || 0,
-      recentIssueCount: Number(recentIssueCountRaw) || 0,
-      limit: DEVICE_SEND_COOLDOWN_LIMIT,
-      cooldownHours: DEVICE_SEND_COOLDOWN_HOURS,
+      activeCount: summary.inFlight,
+      recentIssueCount: summary.recentFailures,
+      limit: summary.maxInFlight,
+      failureThreshold: summary.failureThreshold,
+      cooldownMinutes: summary.failureCooldownMinutes,
     }
   }
 
+  /**
+   * Soft check for explicit pin-to-device operations (reroute target).
+   * Enqueue path no longer hard-blocks: outbox assigns any free device.
+   */
   private async assertDeviceCanAcceptSend(device: any): Promise<void> {
     const health = await this.getDeviceSendHealth(device)
-    const activeBlocked = health.activeCount >= DEVICE_SEND_COOLDOWN_LIMIT
-    const issueBlocked = health.recentIssueCount >= DEVICE_SEND_COOLDOWN_LIMIT
+    const activeBlocked = health.activeCount >= DEVICE_MAX_IN_FLIGHT
+    const issueBlocked = health.recentIssueCount >= DEVICE_FAILURE_THRESHOLD
 
     if (!activeBlocked && !issueBlocked) {
       return
     }
 
     const reason = activeBlocked
-      ? `Device already has ${health.activeCount} pending/dispatched SMS. Cancel, reroute, or let those finish before sending more to this device.`
-      : `Device has ${health.recentIssueCount} failed/unknown SMS in the last ${DEVICE_SEND_COOLDOWN_HOURS} hours. It is paused for safety.`
+      ? `Device already has ${health.activeCount} in-flight SMS (cap ${DEVICE_MAX_IN_FLIGHT}). Cancel, reroute, or wait.`
+      : `Device has ${health.recentIssueCount} failed/unknown SMS in the last ${DEVICE_FAILURE_COOLDOWN_MINUTES} minutes. It is paused for safety.`
 
     throw new HttpException(
       {
@@ -353,8 +347,9 @@ export class GatewayService {
         deviceId: this.getDeviceIdString(device),
         activePendingOrDispatched: health.activeCount,
         recentFailedOrUnknown: health.recentIssueCount,
-        cooldownLimit: health.limit,
-        cooldownHours: health.cooldownHours,
+        cooldownLimit: health.failureThreshold,
+        cooldownMinutes: health.cooldownMinutes,
+        maxInFlight: health.limit,
       },
       HttpStatus.TOO_MANY_REQUESTS,
     )
@@ -596,6 +591,10 @@ export class GatewayService {
     }
   }
 
+  /**
+   * Enqueue outbound SMS into the central outbox.
+   * `deviceId` is the preferred device; any free eligible device may claim/send.
+   */
   async sendSMS(deviceId: string, smsData: SendSMSInputDTO): Promise<any> {
     const device = await this.deviceModel.findById(deviceId)
 
@@ -632,29 +631,20 @@ export class GatewayService {
       )
     }
 
-    // Calculate delay from scheduledAt if provided
+    // Scheduling still supported via scheduledAt on the SMS row
     const delayMs = this.calculateDelayFromScheduledAt(smsData.scheduledAt)
-
-    // Validate that scheduling requires queue to be enabled
-    if (delayMs !== undefined && !this.smsQueueService.isQueueEnabled()) {
-      throw new HttpException(
-        {
-          success: false,
-          error: 'SMS scheduling requires queue to be enabled',
-        },
-        HttpStatus.BAD_REQUEST,
-      )
-    }
-
-    await this.assertDeviceCanAcceptSend(device)
+    const scheduledAtDate =
+      delayMs !== undefined && delayMs > 0
+        ? new Date(Date.now() + delayMs)
+        : smsData.scheduledAt
+          ? new Date(smsData.scheduledAt)
+          : undefined
 
     await this.billingService.canPerformAction(
       device.user.toString(),
       'send_sms',
       recipients.length,
     )
-
-    // TODO: Implement a queue to send the SMS if recipients are too many
 
     let smsBatch: SMSBatch
 
@@ -678,152 +668,76 @@ export class GatewayService {
       )
     }
 
-    const fcmMessages: Message[] = []
+    const requestedAt = new Date()
+    const expiresAt = this.smsOutboxService.computeExpiresAt(
+      requestedAt,
+      scheduledAtDate || null,
+    )
+    const smsIds: string[] = []
 
     for (let recipient of recipients) {
-      recipient = recipient.replace(/\s+/g, "")
+      recipient = recipient.replace(/\s+/g, '')
       const sms = await this.smsModel.create({
         user: device.user,
         device: device._id,
+        preferredDevice: device._id,
         smsBatch: smsBatch._id,
-        message: message,
+        message,
         type: SMSType.SENT,
         recipient,
-        requestedAt: new Date(),
+        requestedAt,
+        scheduledAt: scheduledAtDate,
+        expiresAt,
         status: 'pending',
+        attemptCount: 0,
+        maxAttempts: SMS_MAX_ATTEMPTS,
+        excludedDeviceIds: [],
         ...(smsData.simSubscriptionId !== undefined && {
           simSubscriptionId: smsData.simSubscriptionId,
         }),
       })
-      const updatedSMSData = {
-        smsId: sms._id,
-        smsBatchId: smsBatch._id,
-        deviceId: device._id.toString(),
-        targetDeviceId: device._id.toString(),
-        message,
-        recipients: [recipient],
-        ...(smsData.simSubscriptionId !== undefined && {
-          simSubscriptionId: smsData.simSubscriptionId,
-        }),
-
-        // Legacy fields to be removed in the future
-        smsBody: message,
-        receivers: [recipient],
-      }
-      const stringifiedSMSData = JSON.stringify(updatedSMSData)
-
-      const fcmMessage: Message = {
-        data: {
-          smsData: stringifiedSMSData,
-          targetDeviceId: device._id.toString(),
-        },
-        token: device.fcmToken,
-        android: {
-          priority: 'high',
-        },
-      }
-      fcmMessages.push(fcmMessage)
+      smsIds.push(sms._id.toString())
     }
 
-    // Check if we should use the queue
-    if (this.smsQueueService.isQueueEnabled()) {
-      try {
-        // Update batch status to processing
-        await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
-          $set: { status: 'processing' },
-        })
+    await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
+      $set: { status: 'processing' },
+    })
 
-        // Add to queue
-        const queuedJobs = await this.smsQueueService.addSendSmsJob(
-          deviceId,
-          fcmMessages,
-          smsBatch._id.toString(),
-          delayMs,
-        )
-        await this.markQueuedSmsJobs(queuedJobs)
+    // Immediate multi-device dispatch (central outbox)
+    const dispatchResults = await this.smsOutboxService.dispatchMany(smsIds)
+    const dispatched = dispatchResults.filter((r) => r.status === 'dispatched').length
+    const pending = dispatchResults.filter((r) => r.status === 'pending').length
+    const failed = dispatchResults.filter((r) => r.status === 'failed').length
+    const canceled = dispatchResults.filter((r) => r.status === 'canceled').length
 
-        return {
-          success: true,
-          message: 'SMS added to queue for processing',
-          smsBatchId: smsBatch._id,
-          recipientCount: recipients.length,
-        }
-      } catch (e) {
-        // Update batch status to failed
-        await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
-          $set: { status: 'failed', error: e.message },
-        })
-
-        // Update all SMS in batch to failed
-        await this.smsModel.updateMany(
-          { smsBatch: smsBatch._id },
-          { $set: { status: 'failed', error: e.message } },
-        )
-
-        throw new HttpException(
-          {
-            success: false,
-            error: 'Failed to add SMS to queue',
-            additionalInfo: e,
-          },
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        )
-      }
+    if (dispatched + pending > 0) {
+      await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
+        $set: {
+          status:
+            failed + canceled > 0 && dispatched + pending > 0
+              ? 'partial_success'
+              : dispatched === recipients.length
+                ? 'processing'
+                : 'processing',
+        },
+      })
     }
 
-    try {
-      const response = await firebaseAdmin.messaging().sendEach(fcmMessages)
-
-      console.log(response)
-
-      if (response.successCount === 0) {
-        throw new HttpException(
-          {
-            success: false,
-            error: 'Failed to send SMS',
-            additionalInfo: response,
-          },
-          HttpStatus.BAD_REQUEST,
-        )
-      }
-
-      this.deviceModel
-        .findByIdAndUpdate(deviceId, {
-          $inc: { sentSMSCount: response.successCount },
-        })
-        .exec()
-        .catch((e) => {
-          console.log('Failed to update sentSMSCount')
-          console.log(e)
-        })
-
-      this.smsBatchModel
-        .findByIdAndUpdate(smsBatch._id, {
-          $set: { status: 'completed' },
-        })
-        .exec()
-        .catch((e) => {
-          console.error('failed to update sms batch status to completed')
-        })
-
-      return response
-    } catch (e) {
-      this.smsBatchModel
-        .findByIdAndUpdate(smsBatch._id, {
-          $set: { status: 'failed', error: e.message },
-        })
-        .exec()
-        .catch((e) => {
-          console.error('failed to update sms batch status to failed')
-        })
-      throw new HttpException(
-        {
-          success: false,
-          error: 'Failed to send SMS',
-          additionalInfo: e,
-        },
-        HttpStatus.BAD_REQUEST,
-      )
+    return {
+      success: true,
+      message:
+        pending > 0
+          ? 'SMS accepted into outbox; waiting for free device(s) where needed'
+          : 'SMS dispatched to free device(s)',
+      smsBatchId: smsBatch._id,
+      recipientCount: recipients.length,
+      outbox: {
+        dispatched,
+        pending,
+        failed,
+        canceled,
+        results: dispatchResults,
+      },
     }
   }
 
@@ -854,27 +768,14 @@ export class GatewayService {
       )
     }
 
-    await this.assertDeviceCanAcceptSend(device)
-
     await this.billingService.canPerformAction(
       device.user.toString(),
       'bulk_send_sms',
       body.messages.map((m) => m.recipients).flat().length,
     )
 
-    // Check if any message has scheduledAt and validate queue is enabled
-    const hasScheduledMessages = body.messages.some((m) => m.scheduledAt)
-    if (hasScheduledMessages && !this.smsQueueService.isQueueEnabled()) {
-      throw new HttpException(
-        {
-          success: false,
-          error: 'SMS scheduling requires queue to be enabled',
-        },
-        HttpStatus.BAD_REQUEST,
-      )
-    }
-
     const { messageTemplate, messages } = body
+    const requestedAt = new Date()
 
     const smsBatch = await this.smsBatchModel.create({
       user: device.user,
@@ -889,53 +790,48 @@ export class GatewayService {
       status: 'pending',
     })
 
-    // Track FCM messages with their calculated delays for grouping
-    const fcmMessagesWithDelays: Array<{ message: Message; delayMs?: number }> = []
     const smsDocumentsToInsert: Array<Record<string, any>> = []
-    const smsToFcmMetadata: Array<{
-      recipient: string
-      message: string
-      simSubscriptionId?: number
-      delayMs?: number
-    }> = []
 
     for (const smsData of messages) {
       const message = smsData.message
       const recipients = smsData.recipients
 
-      if (!message) {
+      if (!message || !Array.isArray(recipients) || recipients.length === 0) {
         continue
       }
 
-      if (!Array.isArray(recipients) || recipients.length === 0) {
-        continue
-      }
-
-      // Calculate delay for this message's scheduledAt
       const delayMs = this.calculateDelayFromScheduledAt(smsData.scheduledAt)
+      const scheduledAtDate =
+        delayMs !== undefined && delayMs > 0
+          ? new Date(Date.now() + delayMs)
+          : smsData.scheduledAt
+            ? new Date(smsData.scheduledAt)
+            : undefined
+      const expiresAt = this.smsOutboxService.computeExpiresAt(
+        requestedAt,
+        scheduledAtDate || null,
+      )
 
       for (let recipient of recipients) {
-        recipient = recipient.replace(/\s+/g, "")
+        recipient = recipient.replace(/\s+/g, '')
         smsDocumentsToInsert.push({
           user: device.user,
           device: device._id,
+          preferredDevice: device._id,
           smsBatch: smsBatch._id,
-          message: message,
+          message,
           type: SMSType.SENT,
           recipient,
-          requestedAt: new Date(),
+          requestedAt,
+          scheduledAt: scheduledAtDate,
+          expiresAt,
           status: 'pending',
+          attemptCount: 0,
+          maxAttempts: SMS_MAX_ATTEMPTS,
+          excludedDeviceIds: [],
           ...(smsData.simSubscriptionId !== undefined && {
             simSubscriptionId: smsData.simSubscriptionId,
           }),
-        })
-        smsToFcmMetadata.push({
-          recipient,
-          message,
-          ...(smsData.simSubscriptionId !== undefined && {
-            simSubscriptionId: smsData.simSubscriptionId,
-          }),
-          delayMs,
         })
       }
     }
@@ -946,179 +842,42 @@ export class GatewayService {
     for (let i = 0; i < smsDocumentsToInsert.length; i += insertChunkSize) {
       const chunk = smsDocumentsToInsert.slice(i, i + insertChunkSize)
       if (hasInsertMany) {
-        const insertedChunk = await (this.smsModel as any).insertMany(chunk, { ordered: true })
+        const insertedChunk = await (this.smsModel as any).insertMany(chunk, {
+          ordered: true,
+        })
         insertedSmsDocs.push(...insertedChunk)
         continue
       }
-
-      // Fallback for mocked/non-standard models that don't expose insertMany
       for (const smsDocument of chunk) {
         const createdSmsDoc = await this.smsModel.create(smsDocument)
         insertedSmsDocs.push(createdSmsDoc)
       }
     }
 
-    if (insertedSmsDocs.length !== smsToFcmMetadata.length) {
-      throw new HttpException(
-        {
-          success: false,
-          error: 'Failed to map created SMS records to queue payload',
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      )
+    const smsIds = insertedSmsDocs.map((s) => s._id.toString())
+    await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
+      $set: { status: 'processing' },
+    })
+
+    const dispatchResults = await this.smsOutboxService.dispatchMany(smsIds)
+    const dispatched = dispatchResults.filter((r) => r.status === 'dispatched').length
+    const pending = dispatchResults.filter((r) => r.status === 'pending').length
+    const failed = dispatchResults.filter((r) => r.status === 'failed').length
+
+    return {
+      success: true,
+      message: 'Bulk SMS accepted into outbox',
+      smsBatchId: smsBatch._id,
+      recipientCount: smsIds.length,
+      successCount: dispatched,
+      failureCount: failed,
+      pendingCount: pending,
+      outbox: {
+        dispatched,
+        pending,
+        failed,
+      },
     }
-
-    for (let i = 0; i < insertedSmsDocs.length; i++) {
-      const sms = insertedSmsDocs[i]
-      const metadata = smsToFcmMetadata[i]
-      const updatedSMSData = {
-        smsId: sms._id,
-        smsBatchId: smsBatch._id,
-        deviceId: device._id.toString(),
-        targetDeviceId: device._id.toString(),
-        message: metadata.message,
-        recipients: [metadata.recipient],
-        ...(metadata.simSubscriptionId !== undefined && {
-          simSubscriptionId: metadata.simSubscriptionId,
-        }),
-
-        // Legacy fields to be removed in the future
-        smsBody: metadata.message,
-        receivers: [metadata.recipient],
-      }
-      const stringifiedSMSData = JSON.stringify(updatedSMSData)
-
-      const fcmMessage: Message = {
-        data: {
-          smsData: stringifiedSMSData,
-          targetDeviceId: device._id.toString(),
-        },
-        token: device.fcmToken,
-        android: {
-          priority: 'high',
-        },
-      }
-      fcmMessagesWithDelays.push({ message: fcmMessage, delayMs: metadata.delayMs })
-    }
-
-    // Check if we should use the queue
-    if (this.smsQueueService.isQueueEnabled()) {
-      try {
-        // Group messages by delay (undefined delay means immediate, group together)
-        const messagesByDelay = new Map<number | undefined, Message[]>()
-        for (const { message, delayMs } of fcmMessagesWithDelays) {
-          const delayKey = delayMs !== undefined ? delayMs : undefined
-          if (!messagesByDelay.has(delayKey)) {
-            messagesByDelay.set(delayKey, [])
-          }
-          messagesByDelay.get(delayKey)!.push(message)
-        }
-
-        // Queue each group with its respective delay
-        for (const [delayMs, messages] of messagesByDelay.entries()) {
-          const queuedJobs = await this.smsQueueService.addSendSmsJob(
-            deviceId,
-            messages,
-            smsBatch._id.toString(),
-            delayMs,
-          )
-          await this.markQueuedSmsJobs(queuedJobs)
-        }
-
-        return {
-          success: true,
-          message: 'Bulk SMS added to queue for processing',
-          smsBatchId: smsBatch._id,
-          recipientCount: messages.map((m) => m.recipients).flat().length,
-        }
-      } catch (e) {
-        // Update batch status to failed
-        await this.smsBatchModel.findByIdAndUpdate(smsBatch._id, {
-          $set: {
-            status: 'failed',
-            error: e.message,
-            successCount: 0,
-            failureCount: fcmMessagesWithDelays.length,
-          },
-        })
-
-        // Update all SMS in batch to failed
-        await this.smsModel.updateMany(
-          { smsBatch: smsBatch._id },
-          { $set: { status: 'failed', error: e.message } },
-        )
-
-        throw new HttpException(
-          {
-            success: false,
-            error: 'Failed to add bulk SMS to queue',
-            additionalInfo: e,
-          },
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        )
-      }
-    }
-
-    // For non-queue path, convert back to simple array
-    const fcmMessages = fcmMessagesWithDelays.map(({ message }) => message)
-    const fcmMessagesBatches = fcmMessages.map((m) => [m])
-    const fcmResponses: BatchResponse[] = []
-
-    for (const batch of fcmMessagesBatches) {
-      try {
-        const response = await firebaseAdmin.messaging().sendEach(batch)
-
-        console.log(response)
-        fcmResponses.push(response)
-
-        this.deviceModel
-          .findByIdAndUpdate(deviceId, {
-            $inc: { sentSMSCount: response.successCount },
-          })
-          .exec()
-          .catch((e) => {
-            console.log('Failed to update sentSMSCount')
-            console.log(e)
-          })
-
-        this.smsBatchModel
-          .findByIdAndUpdate(smsBatch._id, {
-            $set: { status: 'completed' },
-          })
-          .exec()
-          .catch((e) => {
-            console.error('failed to update sms batch status to completed')
-          })
-      } catch (e) {
-        console.log('Failed to send SMS: FCM')
-        console.log(e)
-
-        this.smsBatchModel
-          .findByIdAndUpdate(smsBatch._id, {
-            $set: { status: 'failed', error: e.message },
-          })
-          .exec()
-          .catch((e) => {
-            console.error('failed to update sms batch status to failed')
-          })
-      }
-    }
-
-    const successCount = fcmResponses.reduce(
-      (acc, m) => acc + m.successCount,
-      0,
-    )
-    const failureCount = fcmResponses.reduce(
-      (acc, m) => acc + m.failureCount,
-      0,
-    )
-    const response = {
-      success: successCount > 0,
-      successCount,
-      failureCount,
-      fcmResponses,
-    }
-    return response
   }
 
   async receiveSMS(deviceId: string, dto: ReceivedSMSDTO): Promise<any> {
@@ -1771,7 +1530,7 @@ export class GatewayService {
       }
 
       const normalizedStatus = String(original.status || '').toLowerCase()
-      if (RESENDABLE_BLOCKED_STATUSES.includes(normalizedStatus)) {
+      if ((RESENDABLE_BLOCKED_STATUSES as readonly string[]).includes(normalizedStatus)) {
         results.push({
           smsId,
           status: 'skipped',
@@ -1910,9 +1669,8 @@ export class GatewayService {
   }
 
   async updateSMSStatus(deviceId: string, dto: UpdateSMSStatusDTO): Promise<any> {
+    const device = await this.deviceModel.findById(deviceId)
 
-    const device = await this.deviceModel.findById(deviceId);
-    
     if (!device) {
       throw new HttpException(
         {
@@ -1920,11 +1678,11 @@ export class GatewayService {
           error: 'Device not found',
         },
         HttpStatus.NOT_FOUND,
-      );
+      )
     }
-    
-    const sms = await this.smsModel.findById(dto.smsId);
-    
+
+    const sms = await this.smsModel.findById(dto.smsId)
+
     if (!sms) {
       throw new HttpException(
         {
@@ -1932,10 +1690,10 @@ export class GatewayService {
           error: 'SMS not found',
         },
         HttpStatus.NOT_FOUND,
-      );
+      )
     }
-    
-    // Verify the SMS belongs to this device
+
+    // Verify the SMS belongs to this device (or was reassigned mid-flight)
     if (sms.device.toString() !== deviceId) {
       throw new HttpException(
         {
@@ -1943,84 +1701,193 @@ export class GatewayService {
           error: 'SMS does not belong to this device',
         },
         HttpStatus.FORBIDDEN,
-      );
+      )
     }
-    
-    // Normalize status to lowercase for comparison
-    const normalizedStatus = dto.status.toLowerCase();
-    
-    const updateData: any = {
-      status: normalizedStatus, // Store normalized status
-    };
-    
-    // Update timestamps based on status
-    if (normalizedStatus === 'sent' && dto.sentAtInMillis) {
-      updateData.sentAt = new Date(dto.sentAtInMillis);
-    } else if (normalizedStatus === 'delivered' && dto.deliveredAtInMillis) {
-      updateData.deliveredAt = new Date(dto.deliveredAtInMillis);
-    } else if (normalizedStatus === 'failed' && dto.failedAtInMillis) {
-      updateData.failedAt = new Date(dto.failedAtInMillis);
-      updateData.errorCode = dto.errorCode;
-      updateData.errorMessage = dto.errorMessage || 'Unknown error';
-    }
-    
-    // Update the SMS
-const updatedSms = await this.smsModel.findByIdAndUpdate(
-  dto.smsId,
-  { $set: updateData },
-  { new: true } 
-);
-    
-    // Check if all SMS in batch have the same status, then update batch status
-    if (dto.smsBatchId) {
-      const smsBatch = await this.smsBatchModel.findById(dto.smsBatchId);
-      if (smsBatch) {
-        const allSmsInBatch = await this.smsModel.find({ smsBatch: dto.smsBatchId });
-        
-        // Check if all SMS in batch have the same status (case insensitive)
-        const allHaveSameStatus = allSmsInBatch.every(sms => sms.status.toLowerCase() === normalizedStatus);
-        
-        if (allHaveSameStatus) {
-          const smsBatchStatus = normalizedStatus === 'failed' ? 'failed' : 'completed';
-          await this.smsBatchModel.findByIdAndUpdate(dto.smsBatchId, { 
-            $set: { status: smsBatchStatus } 
-          });
-        }
+
+    let normalizedStatus = String(dto.status || '').toLowerCase()
+    // Delivery-receipt issues are not send failures — keep as delivered if already sent
+    if (normalizedStatus === 'delivery_failed') {
+      if (['sent', 'delivered'].includes(String(sms.status).toLowerCase())) {
+        normalizedStatus = 'delivered'
+      } else {
+        normalizedStatus = 'sent'
       }
     }
-    
-    // Trigger webhook event for SMS status update
+
+    const currentStatus = String(sms.status || '').toLowerCase()
+    const terminalSuccess = ['delivered']
+    const rank: Record<string, number> = {
+      pending: 0,
+      dispatched: 1,
+      sent: 2,
+      delivered: 3,
+      failed: 2,
+      unknown: 1,
+      canceled: 3,
+    }
+
+    // Never regress a successful delivery
+    if (terminalSuccess.includes(currentStatus) && normalizedStatus !== 'delivered') {
+      return {
+        success: true,
+        message: 'SMS already delivered; ignoring later status',
+        ignored: true,
+      }
+    }
+
+    // Don't overwrite canceled
+    if (currentStatus === 'canceled') {
+      return {
+        success: true,
+        message: 'SMS already canceled; ignoring later status',
+        ignored: true,
+      }
+    }
+
+    // Immediate multi-device failover on carrier/device send failure
+    if (normalizedStatus === 'failed') {
+      const failover = await this.smsOutboxService.handleSendFailureAndFailover(
+        dto.smsId,
+        deviceId,
+        dto.errorCode,
+        dto.errorMessage || 'Device reported send failure',
+      )
+
+      // If re-dispatched to another device, don't leave status as failed
+      if (failover?.status === 'dispatched' || failover?.status === 'pending') {
+        return {
+          success: true,
+          message: 'Send failed on this device; SMS requeued to free device',
+          failover,
+        }
+      }
+
+      // Terminal failure after attempts exhausted / expired
+      const updatedSms = await this.smsModel.findById(dto.smsId)
+      try {
+        this.webhookService.deliverNotification({
+          sms: updatedSms,
+          user: device.user,
+          event: WebhookEvent.MESSAGE_FAILED,
+        })
+      } catch (error) {
+        console.error('Failed to trigger webhook event:', error)
+      }
+
+      // Device is free — pull more work
+      this.smsOutboxService
+        .notifyWorkAvailable(device.user)
+        .catch(() => undefined)
+
+      return {
+        success: true,
+        message: 'SMS marked failed after failover exhausted',
+        failover,
+      }
+    }
+
+    // Don't regress status rank (e.g. sent → dispatched)
+    if (
+      rank[normalizedStatus] !== undefined &&
+      rank[currentStatus] !== undefined &&
+      rank[normalizedStatus] < rank[currentStatus] &&
+      normalizedStatus !== currentStatus
+    ) {
+      return {
+        success: true,
+        message: `Ignoring status regression ${currentStatus} → ${normalizedStatus}`,
+        ignored: true,
+      }
+    }
+
+    const updateData: any = {
+      status: normalizedStatus,
+    }
+
+    if (normalizedStatus === 'sent' && dto.sentAtInMillis) {
+      updateData.sentAt = new Date(dto.sentAtInMillis)
+    } else if (normalizedStatus === 'delivered') {
+      if (dto.deliveredAtInMillis) {
+        updateData.deliveredAt = new Date(dto.deliveredAtInMillis)
+      }
+      if (!sms.sentAt) {
+        updateData.sentAt = new Date(dto.deliveredAtInMillis || Date.now())
+      }
+    }
+
+    const updateOps: any = { $set: updateData }
+    if (['sent', 'delivered'].includes(normalizedStatus)) {
+      updateOps.$unset = { leasedUntil: '', leasedAt: '' }
+    }
+
+    const updatedSms = await this.smsModel.findByIdAndUpdate(
+      dto.smsId,
+      updateOps,
+      { new: true },
+    )
+
+    if (dto.smsBatchId) {
+      const allSmsInBatch = await this.smsModel.find({ smsBatch: dto.smsBatchId })
+      const allHaveSameStatus = allSmsInBatch.every(
+        (row) => String(row.status).toLowerCase() === normalizedStatus,
+      )
+
+      if (allHaveSameStatus) {
+        const smsBatchStatus =
+          normalizedStatus === 'failed' ? 'failed' : 'completed'
+        await this.smsBatchModel.findByIdAndUpdate(dto.smsBatchId, {
+          $set: { status: smsBatchStatus },
+        })
+      }
+    }
+
     try {
-       let event: WebhookEvent
-       switch (normalizedStatus) {
-          case 'sent':
-            event = WebhookEvent.MESSAGE_SENT
-            break
-          case 'delivered':
-            event = WebhookEvent.MESSAGE_DELIVERED
-            break
-          case 'failed':
-            event = WebhookEvent.MESSAGE_FAILED
-            break
-          case 'received':
-            event = WebhookEvent.MESSAGE_RECEIVED
-            break
-          default:
-            event = WebhookEvent.UNKNOWN_STATE
-          }
+      let event: WebhookEvent
+      switch (normalizedStatus) {
+        case 'sent':
+          event = WebhookEvent.MESSAGE_SENT
+          break
+        case 'delivered':
+          event = WebhookEvent.MESSAGE_DELIVERED
+          break
+        case 'failed':
+          event = WebhookEvent.MESSAGE_FAILED
+          break
+        case 'received':
+          event = WebhookEvent.MESSAGE_RECEIVED
+          break
+        default:
+          event = WebhookEvent.UNKNOWN_STATE
+      }
       this.webhookService.deliverNotification({
         sms: updatedSms,
         user: device.user,
         event,
-      });
+      })
     } catch (error) {
-      console.error('Failed to trigger webhook event:', error);
+      console.error('Failed to trigger webhook event:', error)
     }
-    
+
+    // Free capacity — wake outbox for more work
+    if (['sent', 'delivered'].includes(normalizedStatus)) {
+      this.smsOutboxService.dispatchWaitingOutbox(10).catch(() => undefined)
+    }
+
     return {
       success: true,
       message: 'SMS status updated successfully',
-    };
+    }
+  }
+
+  async claimOutboxForDevice(deviceId: string, limit = 5) {
+    const device = await this.deviceModel.findById(deviceId)
+    if (!device?.enabled) {
+      throw new HttpException(
+        { success: false, error: 'Device not found or disabled' },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+    return this.smsOutboxService.claimForDevice(deviceId, limit)
   }
 
   async getStatsForUser(user: User) {
@@ -2216,11 +2083,26 @@ const updatedSms = await this.smsModel.findByIdAndUpdate(
     // Fetch updated device to get current name
     const updatedDevice = await this.deviceModel.findById(deviceId)
 
+    // Device is alive — pull waiting outbox work and notify peers
+    let claimed = 0
+    try {
+      await this.smsOutboxService.dispatchWaitingOutbox(20)
+      const claim = await this.smsOutboxService.claimForDevice(deviceId, 3)
+      claimed = claim.claimed
+      // If claim returned messages, FCM echo already sent; device also gets work_available
+      if (claimed === 0) {
+        await this.smsOutboxService.notifyWorkAvailable(device.user)
+      }
+    } catch (e) {
+      console.error('heartbeat outbox dispatch failed', e)
+    }
+
     return {
       success: true,
       fcmTokenUpdated,
       lastHeartbeat: now,
       name: updatedDevice?.name,
+      outboxClaimed: claimed,
     }
   }
 }

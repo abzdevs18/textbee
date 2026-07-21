@@ -69,6 +69,11 @@ class SMSStatusUpdateWorker(context: Context, workerParams: WorkerParameters) : 
             if (response.isSuccessful) {
                 Log.d(TAG, "SMS status updated successfully - ID: ${smsDTO.smsId}, Status: ${smsDTO.status}")
                 MessageSyncNotifier.notifyChanged(applicationContext)
+                // Device capacity freed — pull more from central outbox ASAP
+                val status = smsDTO.status?.uppercase() ?: ""
+                if (status == "SENT" || status == "DELIVERED" || status == "FAILED") {
+                    OutboxClaimWorker.enqueue(applicationContext)
+                }
                 Result.success()
             } else {
                 Log.e(TAG, "Failed to update SMS status. Response code: ${response.code()}")

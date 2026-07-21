@@ -235,6 +235,24 @@ export class GatewayController {
     return { data };
   }
 
+  @ApiOperation({
+    summary:
+      'Claim pending outbox SMS for this free device (central queue pull)',
+  })
+  @UseGuards(AuthGuard, CanModifyDevice)
+  @HttpCode(HttpStatus.OK)
+  @Post('/devices/:id/claim-outbox')
+  async claimOutbox(
+    @Param('id') deviceId: string,
+    @Body() body: { limit?: number },
+  ) {
+    const data = await this.gatewayService.claimOutboxForDevice(
+      deviceId,
+      body?.limit ?? 5,
+    )
+    return { data }
+  }
+
   @ApiOperation({ summary: 'Get a single SMS by ID' })
   @UseGuards(AuthGuard, CanModifyDevice)
   @Get('/devices/:id/sms/:smsId')

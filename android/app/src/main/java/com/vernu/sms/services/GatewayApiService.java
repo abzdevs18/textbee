@@ -6,6 +6,8 @@ import com.vernu.sms.dtos.RegisterDeviceInputDTO;
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO;
 import com.vernu.sms.dtos.HeartbeatInputDTO;
 import com.vernu.sms.dtos.HeartbeatResponseDTO;
+import com.vernu.sms.dtos.ClaimOutboxRequest;
+import com.vernu.sms.dtos.ClaimOutboxResponse;
 
 import retrofit2.Call;
 import retrofit2.http.Body;
@@ -29,4 +31,7 @@ public interface GatewayApiService {
 
     @POST("gateway/devices/{deviceId}/heartbeat")
     Call<HeartbeatResponseDTO> heartbeat(@Path("deviceId") String deviceId, @Header("x-api-key") String apiKey, @Body() HeartbeatInputDTO body);
+
+    @POST("gateway/devices/{deviceId}/claim-outbox")
+    Call<ClaimOutboxResponse> claimOutbox(@Path("deviceId") String deviceId, @Header("x-api-key") String apiKey, @Body() ClaimOutboxRequest body);
 }

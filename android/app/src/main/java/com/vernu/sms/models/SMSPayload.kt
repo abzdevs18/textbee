@@ -8,6 +8,8 @@ class SMSPayload {
     var smsId: String? = null
     var smsBatchId: String? = null
     var simSubscriptionId: Int? = null
+    /** ISO-8601 expiry from server — never send after this (2h max age policy). */
+    var expiresAt: String? = null
 
     // Legacy fields — no longer actively used but kept for backward compatibility
     var receivers: Array<String>? = null

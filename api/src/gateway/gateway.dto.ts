@@ -507,4 +507,11 @@ export class HeartbeatResponseDTO {
     description: 'Device name (if updated)',
   })
   name?: string
+
+  @ApiProperty({
+    type: Number,
+    required: false,
+    description: 'Number of outbox SMS claimed during this heartbeat',
+  })
+  outboxClaimed?: number
 }

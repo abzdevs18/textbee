@@ -10,6 +10,7 @@ import { AuthService } from '../auth/auth.service'
 import { WebhookService } from '../webhook/webhook.service'
 import { BillingService } from '../billing/billing.service'
 import { SmsQueueService } from './queue/sms-queue.service'
+import { SmsOutboxService } from './sms-outbox.service'
 import { Model, Types } from 'mongoose'
 import { ConfigModule } from '@nestjs/config'
 import { HttpException, HttpStatus } from '@nestjs/common'
@@ -85,6 +86,26 @@ describe('GatewayService', () => {
     addSendSmsJob: jest.fn(),
   }
 
+  const mockSmsOutboxService = {
+    computeExpiresAt: jest.fn((requestedAt: Date) => new Date(requestedAt.getTime() + 2 * 60 * 60 * 1000)),
+    dispatchMany: jest.fn().mockResolvedValue([]),
+    tryDispatchSms: jest.fn(),
+    handleSendFailureAndFailover: jest.fn(),
+    claimForDevice: jest.fn().mockResolvedValue({ claimed: 0, messages: [] }),
+    notifyWorkAvailable: jest.fn().mockResolvedValue(undefined),
+    dispatchWaitingOutbox: jest.fn().mockResolvedValue(0),
+    getDeviceHealthSummary: jest.fn().mockResolvedValue({
+      inFlight: 0,
+      recentFailures: 0,
+      maxInFlight: 5,
+      failureThreshold: 3,
+      failureCooldownMinutes: 5,
+      isPaused: false,
+    }),
+    cancelAllExpired: jest.fn(),
+    reclaimExpiredLeases: jest.fn(),
+  }
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -120,6 +141,10 @@ describe('GatewayService', () => {
         {
           provide: SmsQueueService,
           useValue: mockSmsQueueService,
+        },
+        {
+          provide: SmsOutboxService,
+          useValue: mockSmsOutboxService,
         },
       ],
       imports: [ConfigModule],
@@ -421,7 +446,11 @@ describe('GatewayService', () => {
       jest.spyOn(firebaseAdmin.messaging(), 'sendEach').mockResolvedValue(mockFcmResponse)
     })
 
-    it('should send SMS successfully', async () => {
+    it('should send SMS successfully via central outbox', async () => {
+      mockSmsOutboxService.dispatchMany.mockResolvedValue([
+        { smsId: 'sms123', status: 'dispatched', deviceId: mockDeviceId },
+      ])
+
       const result = await service.sendSMS(mockDeviceId, mockSmsInput)
 
       expect(mockDeviceModel.findById).toHaveBeenCalledWith(mockDeviceId)
@@ -431,17 +460,23 @@ describe('GatewayService', () => {
         mockSmsInput.recipients.length,
       )
       expect(mockSmsBatchModel.create).toHaveBeenCalled()
-      expect(mockSmsModel.create).toHaveBeenCalled()
-      expect(firebaseAdmin.messaging().sendEach).toHaveBeenCalled()
-      const [fcmMessages] = (firebaseAdmin.messaging().sendEach as jest.Mock).mock.calls[0]
-      expect(fcmMessages[0].data.targetDeviceId).toBe(mockDeviceId)
-      expect(JSON.parse(fcmMessages[0].data.smsData)).toEqual(
+      expect(mockSmsModel.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          deviceId: mockDeviceId,
-          targetDeviceId: mockDeviceId,
+          preferredDevice: mockDevice._id,
+          expiresAt: expect.any(Date),
+          maxAttempts: expect.any(Number),
         }),
       )
-      expect(result).toEqual(mockFcmResponse)
+      expect(mockSmsOutboxService.dispatchMany).toHaveBeenCalled()
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          smsBatchId: mockSmsBatch._id,
+          outbox: expect.objectContaining({
+            dispatched: 1,
+          }),
+        }),
+      )
     })
 
     it('should throw error if device is not enabled', async () => {
@@ -469,52 +504,38 @@ describe('GatewayService', () => {
       ).rejects.toThrow(HttpException)
     })
 
-    it('should block sending when the device already has 5 active SMS', async () => {
-      mockSmsModel.countDocuments
-        .mockResolvedValueOnce(5)
-        .mockResolvedValueOnce(0)
-
-      await expect(
-        service.sendSMS(mockDeviceId, mockSmsInput),
-      ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS })
-      expect(mockBillingService.canPerformAction).not.toHaveBeenCalled()
-      expect(mockSmsBatchModel.create).not.toHaveBeenCalled()
-    })
-
-    it('should block sending when the device has 5 recent failed or unknown SMS', async () => {
-      mockSmsModel.countDocuments
-        .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce(5)
-
-      await expect(
-        service.sendSMS(mockDeviceId, mockSmsInput),
-      ).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS })
-      expect(mockBillingService.canPerformAction).not.toHaveBeenCalled()
-      expect(mockSmsBatchModel.create).not.toHaveBeenCalled()
-    })
-
-    it('should queue SMS if queue is enabled', async () => {
-      mockSmsQueueService.isQueueEnabled.mockReturnValue(true)
-      mockSmsQueueService.addSendSmsJob.mockResolvedValue(true)
+    it('should still accept SMS when preferred device is busy (outbox assigns free device)', async () => {
+      mockSmsOutboxService.getDeviceHealthSummary.mockResolvedValue({
+        inFlight: 5,
+        recentFailures: 0,
+        maxInFlight: 5,
+        failureThreshold: 3,
+        failureCooldownMinutes: 5,
+        isPaused: true,
+      })
+      mockSmsOutboxService.dispatchMany.mockResolvedValue([
+        { smsId: 'sms123', status: 'pending', reason: 'NO_ELIGIBLE_DEVICE' },
+      ])
 
       const result = await service.sendSMS(mockDeviceId, mockSmsInput)
 
-      expect(mockSmsQueueService.isQueueEnabled).toHaveBeenCalled()
-      expect(mockSmsQueueService.addSendSmsJob).toHaveBeenCalled()
-      expect(result).toHaveProperty('success', true)
-      expect(result).toHaveProperty('smsBatchId', mockSmsBatch._id)
+      expect(mockBillingService.canPerformAction).toHaveBeenCalled()
+      expect(mockSmsBatchModel.create).toHaveBeenCalled()
+      expect(result.success).toBe(true)
+      expect(result.outbox.pending).toBe(1)
     })
 
-    it('should handle queue error properly', async () => {
-      mockSmsQueueService.isQueueEnabled.mockReturnValue(true)
-      mockSmsQueueService.addSendSmsJob.mockRejectedValue(new Error('Queue error'))
+    it('should dispatch via outbox (queue path superseded by central outbox)', async () => {
+      mockSmsOutboxService.dispatchMany.mockResolvedValue([
+        { smsId: 'sms123', status: 'dispatched', deviceId: mockDeviceId },
+      ])
 
-      await expect(
-        service.sendSMS(mockDeviceId, mockSmsInput),
-      ).rejects.toThrow(HttpException)
-      
-      expect(mockSmsBatchModel.findByIdAndUpdate).toHaveBeenCalled()
-      expect(mockSmsModel.updateMany).toHaveBeenCalled()
+      const result = await service.sendSMS(mockDeviceId, mockSmsInput)
+
+      expect(mockSmsOutboxService.dispatchMany).toHaveBeenCalled()
+      expect(result).toHaveProperty('success', true)
+      expect(result).toHaveProperty('smsBatchId', mockSmsBatch._id)
+      expect(result.outbox.dispatched).toBe(1)
     })
   })
 
@@ -581,7 +602,16 @@ describe('GatewayService', () => {
       jest.spyOn(firebaseAdmin.messaging(), 'sendEach').mockResolvedValue(mockFcmResponse)
     })
 
-    it('should send bulk SMS successfully', async () => {
+    it('should send bulk SMS successfully via outbox', async () => {
+      ;(mockSmsModel as any).insertMany = jest.fn().mockResolvedValue([
+        { _id: 'sms1' },
+        { _id: 'sms2' },
+      ])
+      mockSmsOutboxService.dispatchMany.mockResolvedValue([
+        { smsId: 'sms1', status: 'dispatched', deviceId: mockDeviceId },
+        { smsId: 'sms2', status: 'dispatched', deviceId: mockDeviceId },
+      ])
+
       const result = await service.sendBulkSMS(mockDeviceId, mockBulkSmsInput)
 
       expect(mockDeviceModel.findById).toHaveBeenCalledWith(mockDeviceId)
@@ -591,29 +621,26 @@ describe('GatewayService', () => {
         2,
       )
       expect(mockSmsBatchModel.create).toHaveBeenCalled()
-      expect(mockSmsModel.create).toHaveBeenCalled()
-      expect(firebaseAdmin.messaging().sendEach).toHaveBeenCalled()
-      const [fcmMessages] = (firebaseAdmin.messaging().sendEach as jest.Mock).mock.calls[0]
-      expect(fcmMessages[0].data.targetDeviceId).toBe(mockDeviceId)
-      expect(JSON.parse(fcmMessages[0].data.smsData)).toEqual(
-        expect.objectContaining({
-          deviceId: mockDeviceId,
-          targetDeviceId: mockDeviceId,
-        }),
-      )
+      expect(mockSmsOutboxService.dispatchMany).toHaveBeenCalled()
       expect(result).toHaveProperty('success', true)
+      expect(result.successCount).toBe(2)
     })
 
-    it('should queue bulk SMS if queue is enabled', async () => {
-      mockSmsQueueService.isQueueEnabled.mockReturnValue(true)
-      mockSmsQueueService.addSendSmsJob.mockResolvedValue(true)
+    it('should accept bulk SMS into outbox even when pending free device', async () => {
+      ;(mockSmsModel as any).insertMany = jest.fn().mockResolvedValue([
+        { _id: 'sms1' },
+        { _id: 'sms2' },
+      ])
+      mockSmsOutboxService.dispatchMany.mockResolvedValue([
+        { smsId: 'sms1', status: 'pending' },
+        { smsId: 'sms2', status: 'pending' },
+      ])
 
       const result = await service.sendBulkSMS(mockDeviceId, mockBulkSmsInput)
 
-      expect(mockSmsQueueService.isQueueEnabled).toHaveBeenCalled()
-      expect(mockSmsQueueService.addSendSmsJob).toHaveBeenCalled()
       expect(result).toHaveProperty('success', true)
       expect(result).toHaveProperty('smsBatchId', mockSmsBatch._id)
+      expect(result.pendingCount).toBe(2)
     })
   })
 

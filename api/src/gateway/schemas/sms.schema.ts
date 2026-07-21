@@ -16,6 +16,10 @@ export class SMS {
   @Prop({ type: Types.ObjectId, ref: Device.name, required: true })
   device: Device | Types.ObjectId
 
+  /** Preferred device at enqueue time; outbox may assign a different free device. */
+  @Prop({ type: Types.ObjectId, ref: Device.name, required: false, index: true })
+  preferredDevice?: Device | Types.ObjectId
+
   @Prop({ type: Types.ObjectId, ref: SMSBatch.name })
   smsBatch: SMSBatch | Types.ObjectId
 
@@ -51,8 +55,29 @@ export class SMS {
   @Prop({ type: Date })
   scheduledAt: Date
 
+  /** Hard deadline — never send after this (2h policy). */
+  @Prop({ type: Date, index: true })
+  expiresAt: Date
+
   @Prop({ type: String })
   queueJobId: string
+
+  /** Claim/lease so only one device holds the SMS at a time. */
+  @Prop({ type: Date, index: true })
+  leasedUntil: Date
+
+  @Prop({ type: Date })
+  leasedAt: Date
+
+  @Prop({ type: Number, default: 0 })
+  attemptCount: number
+
+  @Prop({ type: Number, default: 5 })
+  maxAttempts: number
+
+  /** Device ids that already failed this SMS (skip on next pick). */
+  @Prop({ type: [Types.ObjectId], default: [] })
+  excludedDeviceIds: Types.ObjectId[]
 
   @Prop({ type: Date })
   dispatchedAt: Date
@@ -77,9 +102,6 @@ export class SMS {
 
   @Prop({ type: String, required: false })
   errorMessage: string
-
-  // @Prop({ type: String })
-  // failureReason: string
 
   @Prop({ type: String, default: 'pending' })
   status:
@@ -107,3 +129,12 @@ SMSSchema.index({ device: 1, type: 1, receivedAt: -1 })
 SMSSchema.index({ user: 1, createdAt: -1, type: 1 })
 SMSSchema.index({ user: 1, status: 1, createdAt: -1 })
 SMSSchema.index({ queueJobId: 1 })
+// Central outbox: oldest pending first for claim/dispatch
+SMSSchema.index({
+  status: 1,
+  type: 1,
+  expiresAt: 1,
+  leasedUntil: 1,
+  requestedAt: 1,
+})
+SMSSchema.index({ user: 1, status: 1, type: 1, preferredDevice: 1, requestedAt: 1 })

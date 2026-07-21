@@ -9,6 +9,7 @@ import { SMSBatch } from '../schemas/sms-batch.schema'
 import { WebhookService } from 'src/webhook/webhook.service'
 import { WebhookEvent } from 'src/webhook/webhook-event.enum'
 import { Logger } from '@nestjs/common'
+import { SmsOutboxService } from '../sms-outbox.service'
 
 function getFcmErrorCode(error: { code?: string; message?: string } | null): string {
   if (!error?.code) return 'FCM_DELIVERY_FAILED'
@@ -61,6 +62,7 @@ export class SmsQueueProcessor {
     @InjectModel(SMS.name) private smsModel: Model<SMS>,
     @InjectModel(SMSBatch.name) private smsBatchModel: Model<SMSBatch>,
     private webhookService: WebhookService,
+    private smsOutboxService: SmsOutboxService,
   ) {}
 
   @Process({
@@ -178,19 +180,14 @@ export class SmsQueueProcessor {
         }
       }
 
+      // FCM failures → immediate multi-device failover via central outbox
       if (failedUpdates.length > 0) {
-        const failedAt = new Date()
         for (const failedUpdate of failedUpdates) {
-          await this.smsModel.updateOne(
-            { _id: failedUpdate.smsId as any },
-            {
-              $set: {
-                status: 'failed',
-                failedAt,
-                errorCode: failedUpdate.errorCode,
-                errorMessage: failedUpdate.errorMessage,
-              },
-            },
+          await this.smsOutboxService.handleSendFailureAndFailover(
+            failedUpdate.smsId,
+            deviceId,
+            failedUpdate.errorCode,
+            failedUpdate.errorMessage,
           )
         }
       }

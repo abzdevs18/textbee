@@ -19,10 +19,12 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
         const val KEY_SMS_ID = "sms_id"
         const val KEY_SMS_BATCH_ID = "sms_batch_id"
         const val KEY_SIM_SUBSCRIPTION_ID = "sim_subscription_id"
+        const val KEY_EXPIRES_AT = "expires_at"
 
         fun enqueue(
             context: Context, phone: String, message: String,
-            smsId: String?, smsBatchId: String?, simSubscriptionId: Int?
+            smsId: String?, smsBatchId: String?, simSubscriptionId: Int?,
+            expiresAt: String? = null
         ) {
             val inputData = Data.Builder()
                 .putString(KEY_PHONE, phone)
@@ -30,6 +32,7 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
                 .putString(KEY_SMS_ID, smsId)
                 .putString(KEY_SMS_BATCH_ID, smsBatchId)
                 .putInt(KEY_SIM_SUBSCRIPTION_ID, simSubscriptionId ?: -1)
+                .putString(KEY_EXPIRES_AT, expiresAt)
                 .build()
 
             val workRequest = OneTimeWorkRequest.Builder(SmsSendWorker::class.java)
@@ -50,6 +53,7 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
         val smsId = inputData.getString(KEY_SMS_ID)
         val smsBatchId = inputData.getString(KEY_SMS_BATCH_ID)
         val simSubscriptionId = inputData.getInt(KEY_SIM_SUBSCRIPTION_ID, -1)
+        val expiresAt = inputData.getString(KEY_EXPIRES_AT)
 
         if (phone == null || message == null || smsId == null) {
             Log.e(TAG, "Missing required parameters")
@@ -57,6 +61,14 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
         }
 
         val context = applicationContext
+
+        // Hard 2h policy: never send expired outbox SMS
+        if (isExpired(expiresAt)) {
+            Log.w(TAG, "SMS $smsId expired (expiresAt=$expiresAt); refusing send")
+            SMSHelper.reportExpired(context, smsId, smsBatchId ?: "")
+            return Result.success()
+        }
+
         val requestedSim = resolveRequestedSim(context, simSubscriptionId)
         val resolvedSim = SimFailoverManager.resolveSendSim(context, requestedSim, smsBatchId)
 
@@ -105,5 +117,30 @@ class SmsSendWorker(context: Context, workerParams: WorkerParameters) : Worker(c
         }
 
         return null
+    }
+
+    private fun isExpired(expiresAt: String?): Boolean {
+        if (expiresAt.isNullOrBlank()) return false
+        return try {
+            val patterns = arrayOf(
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+                "yyyy-MM-dd'T'HH:mm:ssX"
+            )
+            for (pattern in patterns) {
+                try {
+                    val sdf = java.text.SimpleDateFormat(pattern, java.util.Locale.US)
+                    sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    val date = sdf.parse(expiresAt) ?: continue
+                    return System.currentTimeMillis() > date.time
+                } catch (_: Exception) {
+                }
+            }
+            val millis = expiresAt.toLongOrNull()
+            millis != null && System.currentTimeMillis() > millis
+        } catch (_: Exception) {
+            false
+        }
     }
 }

@@ -126,6 +126,23 @@ object SMSHelper {
         updateSMSStatus(context, smsDTO)
     }
 
+    /**
+     * Report that the device refused to send because the SMS exceeded max age (2h).
+     * Server treats FAILED as failover/cancel path.
+     */
+    @JvmStatic
+    fun reportExpired(context: Context, smsId: String, smsBatchId: String) {
+        val smsDTO = SMSDTO().apply {
+            this.smsId = smsId
+            this.smsBatchId = smsBatchId
+            status = "FAILED"
+            failedAtInMillis = System.currentTimeMillis()
+            errorCode = "EXPIRED_MAX_AGE"
+            errorMessage = "SMS exceeded max pending age (2 hours); device refused send"
+        }
+        updateSMSStatus(context, smsDTO)
+    }
+
     private fun reportSendingError(
         context: Context,
         smsId: String,
