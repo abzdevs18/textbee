@@ -505,12 +505,20 @@ export class GatewayService {
       updateData.fcmTokenInvalidatedAt = undefined
       updateData.fcmTokenInvalidReason = undefined
     }
-    
-    return await this.deviceModel.findByIdAndUpdate(
+
+    const previousEnabled = !!device.enabled
+    const updated = await this.deviceModel.findByIdAndUpdate(
       deviceId,
       { $set: updateData },
       { new: true },
     )
+
+    // When web/API toggles gateway, push config so the phone switch updates immediately
+    if (updated && previousEnabled !== !!updated.enabled) {
+      this.pushDeviceConfig(updated).catch(() => undefined)
+    }
+
+    return updated
   }
 
   async deleteDevice(deviceId: string): Promise<any> {
@@ -2083,18 +2091,20 @@ export class GatewayService {
     // Fetch updated device to get current name
     const updatedDevice = await this.deviceModel.findById(deviceId)
 
-    // Device is alive — pull waiting outbox work and notify peers
+    // Device is alive — only claim/dispatch when gateway is enabled on server
     let claimed = 0
-    try {
-      await this.smsOutboxService.dispatchWaitingOutbox(20)
-      const claim = await this.smsOutboxService.claimForDevice(deviceId, 3)
-      claimed = claim.claimed
-      // If claim returned messages, FCM echo already sent; device also gets work_available
-      if (claimed === 0) {
-        await this.smsOutboxService.notifyWorkAvailable(device.user)
+    const gatewayEnabled = updatedDevice?.enabled !== false
+    if (gatewayEnabled) {
+      try {
+        await this.smsOutboxService.dispatchWaitingOutbox(20)
+        const claim = await this.smsOutboxService.claimForDevice(deviceId, 3)
+        claimed = claim.claimed
+        if (claimed === 0) {
+          await this.smsOutboxService.notifyWorkAvailable(device.user)
+        }
+      } catch (e) {
+        console.error('heartbeat outbox dispatch failed', e)
       }
-    } catch (e) {
-      console.error('heartbeat outbox dispatch failed', e)
     }
 
     return {
@@ -2103,6 +2113,30 @@ export class GatewayService {
       lastHeartbeat: now,
       name: updatedDevice?.name,
       outboxClaimed: claimed,
+      enabled: gatewayEnabled,
+    }
+  }
+
+  /**
+   * Push remote gateway config to the phone so web enable/disable updates the app UI ASAP.
+   */
+  private async pushDeviceConfig(device: any): Promise<void> {
+    if (!device?.fcmToken || device.fcmTokenInvalidatedAt) {
+      return
+    }
+    try {
+      await firebaseAdmin.messaging().send({
+        data: {
+          type: 'device_config',
+          enabled: device.enabled ? 'true' : 'false',
+        },
+        token: device.fcmToken,
+        android: { priority: 'high' },
+      })
+    } catch (e: any) {
+      console.warn(
+        `pushDeviceConfig failed for ${device._id}: ${e?.message || e}`,
+      )
     }
   }
 }

@@ -514,4 +514,12 @@ export class HeartbeatResponseDTO {
     description: 'Number of outbox SMS claimed during this heartbeat',
   })
   outboxClaimed?: number
+
+  @ApiProperty({
+    type: Boolean,
+    required: false,
+    description:
+      'Server-side gateway enabled flag — phone should mirror this (web can toggle remotely)',
+  })
+  enabled?: boolean
 }

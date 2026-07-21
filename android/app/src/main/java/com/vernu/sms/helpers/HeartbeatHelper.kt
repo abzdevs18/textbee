@@ -124,11 +124,15 @@ object HeartbeatHelper {
                     )
                     Log.d(TAG, "Synced device name from heartbeat: ${body.name}")
                 }
+                // Web (or any client) may have toggled gateway — server wins
+                if (body.enabled != null) {
+                    GatewayConfigSync.applyServerEnabled(context, body.enabled!!)
+                }
                 SharedPreferenceHelper.setSharedPreferenceString(
                     context, AppConstants.SHARED_PREFS_LAST_HEARTBEAT_MS_KEY,
                     System.currentTimeMillis().toString()
                 )
-                Log.d(TAG, "Heartbeat sent successfully")
+                Log.d(TAG, "Heartbeat sent successfully (server enabled=${body.enabled})")
                 true
             } else {
                 Log.e(TAG, "Failed to send heartbeat. Response code: ${response.code()}")
@@ -150,11 +154,7 @@ object HeartbeatHelper {
         ) ?: ""
         if (deviceId.isEmpty()) return false
 
-        val deviceEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
-            context, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false
-        )
-        if (!deviceEnabled) return false
-
+        // Keep heartbeats even when gateway is off so web enable/disable can sync
         return SharedPreferenceHelper.getSharedPreferenceBoolean(
             context, AppConstants.SHARED_PREFS_HEARTBEAT_ENABLED_KEY, true
         )

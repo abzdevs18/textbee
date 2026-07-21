@@ -1,6 +1,10 @@
 package com.vernu.sms.ui.settings
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.telephony.SubscriptionManager
 import androidx.lifecycle.AndroidViewModel
@@ -10,6 +14,7 @@ import com.vernu.sms.AppConstants
 import com.vernu.sms.BuildConfig
 import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.dtos.RegisterDeviceInputDTO
+import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,8 +49,35 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
+    private val gatewayConfigReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action == GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED) {
+                loadSettings()
+            }
+        }
+    }
+
     init {
         loadSettings()
+        registerGatewayConfigReceiver()
+    }
+
+    override fun onCleared() {
+        try {
+            context.unregisterReceiver(gatewayConfigReceiver)
+        } catch (_: Exception) {
+        }
+        super.onCleared()
+    }
+
+    private fun registerGatewayConfigReceiver() {
+        val filter = IntentFilter(GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(gatewayConfigReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(gatewayConfigReceiver, filter)
+        }
     }
 
     private fun loadSettings() {
@@ -111,17 +143,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 val input = RegisterDeviceInputDTO().apply { this.enabled = enabled }
                 val response = ApiManagerKt.getApiService().updateDevice(deviceId, apiKey, input)
                 if (response.isSuccessful) {
-                    SharedPreferenceHelper.setSharedPreferenceBoolean(
-                        context, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, enabled
-                    )
+                    GatewayConfigSync.applyServerEnabled(context, enabled)
                     _state.update { it.copy(isGatewayEnabled = enabled) }
-                    if (enabled) {
-                        TextBeeUtils.startStickyNotificationService(context)
-                        com.vernu.sms.helpers.HeartbeatManager.scheduleHeartbeat(context)
-                    } else {
-                        TextBeeUtils.stopStickyNotificationService(context)
-                        com.vernu.sms.helpers.HeartbeatManager.cancelHeartbeat(context)
-                    }
                 } else {
                     _state.update { it.copy(snackbarMessage = extractErrorMessage(response, "Failed to update gateway status")) }
                 }

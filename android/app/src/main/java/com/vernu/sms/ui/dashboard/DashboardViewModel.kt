@@ -1,6 +1,11 @@
 package com.vernu.sms.ui.dashboard
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vernu.sms.ApiManagerKt
@@ -10,6 +15,7 @@ import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.dtos.SimInfoDTO
 import com.vernu.sms.dtos.SubscriptionResponse
 import com.vernu.sms.dtos.UserProfile
+import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.helpers.serverErrorMessage
@@ -41,10 +47,37 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(DashboardState())
     val state: StateFlow<DashboardState> = _state.asStateFlow()
 
+    private val gatewayConfigReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action == GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED) {
+                loadLocalState()
+            }
+        }
+    }
+
     init {
         loadLocalState()
         fetchSubscription()
         fetchUserProfile()
+        registerGatewayConfigReceiver()
+    }
+
+    override fun onCleared() {
+        try {
+            context.unregisterReceiver(gatewayConfigReceiver)
+        } catch (_: Exception) {
+        }
+        super.onCleared()
+    }
+
+    private fun registerGatewayConfigReceiver() {
+        val filter = IntentFilter(GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(gatewayConfigReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(gatewayConfigReceiver, filter)
+        }
     }
 
     fun refresh() {
@@ -88,11 +121,14 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
 
-        // Restart sticky notification service on every launch if it should be running,
-        // matching legacy MainActivity behaviour (service is killed by OS on modern Android).
+        // Sticky notification only when gateway on; heartbeat always while registered
+        // so web enable/disable can sync via heartbeat + FCM device_config.
         if (isEnabled) {
             TextBeeUtils.startStickyNotificationService(context)
-            if (deviceId.isNotEmpty()) HeartbeatManager.triggerHeartbeat(context)
+        }
+        if (deviceId.isNotEmpty()) {
+            HeartbeatManager.scheduleHeartbeat(context)
+            HeartbeatManager.triggerHeartbeat(context)
         }
     }
 
@@ -161,28 +197,10 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 val input = RegisterDeviceInputDTO().apply { this.enabled = enabled }
                 val response = ApiManagerKt.getApiService().updateDevice(deviceId, apiKey, input)
                 if (response.isSuccessful) {
-                    SharedPreferenceHelper.setSharedPreferenceBoolean(
-                        context, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, enabled
-                    )
-                    _state.update { it.copy(isGatewayEnabled = enabled) }
-                    try {
-                        if (enabled) {
-                            if (SharedPreferenceHelper.getSharedPreferenceBoolean(
-                                    context, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false
-                                )
-                            ) {
-                                TextBeeUtils.startStickyNotificationService(context)
-                            }
-                            HeartbeatManager.scheduleHeartbeat(context)
-                        } else {
-                            TextBeeUtils.stopStickyNotificationService(context)
-                            HeartbeatManager.cancelHeartbeat(context)
-                        }
-                    } catch (e: Exception) {
-                        TextBeeUtils.logException(e, "Gateway service toggle failed")
-                    }
+                    GatewayConfigSync.applyServerEnabled(context, enabled)
                     _state.update {
                         it.copy(
+                            isGatewayEnabled = enabled,
                             userMessage = if (enabled) "Gateway enabled" else "Gateway disabled"
                         )
                     }

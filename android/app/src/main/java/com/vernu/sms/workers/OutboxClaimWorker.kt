@@ -12,6 +12,7 @@ import androidx.work.WorkerParameters
 import com.vernu.sms.ApiManager
 import com.vernu.sms.AppConstants
 import com.vernu.sms.dtos.ClaimOutboxRequest
+import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -50,6 +51,11 @@ class OutboxClaimWorker(context: Context, params: WorkerParameters) : Worker(con
 
         if (deviceId.isBlank() || apiKey.isBlank()) {
             Log.w(TAG, "Device not registered; skip claim")
+            return Result.success()
+        }
+
+        if (!GatewayConfigSync.isGatewayEnabled(context)) {
+            Log.d(TAG, "Gateway disabled; skip outbox claim")
             return Result.success()
         }
 

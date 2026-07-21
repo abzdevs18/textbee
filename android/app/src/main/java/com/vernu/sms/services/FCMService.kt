@@ -21,6 +21,7 @@ import com.vernu.sms.R
 import com.vernu.sms.activities.MainActivity
 import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO
+import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.HeartbeatHelper
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.MessageSyncNotifier
@@ -52,8 +53,22 @@ class FCMService : FirebaseMessagingService() {
                 return
             }
 
+            // Web/API toggled gateway on/off — update local switch immediately
+            if (messageType == "device_config") {
+                val enabledRaw = remoteMessage.data["enabled"]
+                val enabled = enabledRaw.equals("true", ignoreCase = true) ||
+                        enabledRaw == "1"
+                Log.d(TAG, "Received device_config enabled=$enabled")
+                GatewayConfigSync.applyServerEnabled(this, enabled)
+                return
+            }
+
             // Central outbox: free devices pull work when notified
             if (messageType == "work_available") {
+                if (!GatewayConfigSync.isGatewayEnabled(this)) {
+                    Log.d(TAG, "Ignoring work_available — gateway disabled")
+                    return
+                }
                 Log.d(TAG, "Received work_available — claiming outbox SMS")
                 OutboxClaimWorker.enqueue(this)
                 return
@@ -71,6 +86,11 @@ class FCMService : FirebaseMessagingService() {
                 ?: smsPayload.targetDeviceId
                 ?: smsPayload.deviceId
             if (!isForThisDevice(targetDeviceId, smsPayload.smsId)) {
+                return
+            }
+
+            if (!GatewayConfigSync.isGatewayEnabled(this)) {
+                Log.w(TAG, "Ignoring SMS command — gateway disabled on this device")
                 return
             }
 

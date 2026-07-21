@@ -36,6 +36,7 @@ import com.vernu.sms.R;
 import com.vernu.sms.dtos.RegisterDeviceInputDTO;
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO;
 import com.vernu.sms.dtos.SimInfoCollectionDTO;
+import com.vernu.sms.helpers.GatewayConfigSync;
 import com.vernu.sms.helpers.SharedPreferenceHelper;
 import com.vernu.sms.helpers.VersionTracker;
 import com.vernu.sms.helpers.HeartbeatManager;
@@ -126,8 +127,8 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "Starting sticky notification service on app start");
         }
 
-        // Schedule heartbeat if device is enabled and registered
-        if (gatewayEnabled && !deviceId.isEmpty()) {
+        // Keep heartbeat while registered so web enable/disable can sync
+        if (deviceId != null && !deviceId.isEmpty()) {
             HeartbeatManager.scheduleHeartbeat(mContext);
             Log.d(TAG, "Scheduling heartbeat on app start");
         }
@@ -165,55 +166,7 @@ public class MainActivity extends AppCompatActivity {
         } else {
             deviceNameEditText.setText(storedDeviceName);
         }
-        gatewaySwitch.setChecked(SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false));
-        gatewaySwitch.setOnCheckedChangeListener((compoundButton, isCheked) -> {
-            View view = compoundButton.getRootView();
-            compoundButton.setEnabled(false);
-            String key = apiKeyEditText.getText().toString();
-
-            RegisterDeviceInputDTO registerDeviceInput = new RegisterDeviceInputDTO();
-            registerDeviceInput.setEnabled(isCheked);
-            registerDeviceInput.setAppVersionCode(BuildConfig.VERSION_CODE);
-            registerDeviceInput.setAppVersionName(BuildConfig.VERSION_NAME);
-
-            Call<RegisterDeviceResponseDTO> apiCall = ApiManager.getApiService().updateDevice(deviceId, key, registerDeviceInput);
-            apiCall.enqueue(new Callback<RegisterDeviceResponseDTO>() {
-                @Override
-                public void onResponse(Call<RegisterDeviceResponseDTO> call, Response<RegisterDeviceResponseDTO> response) {
-                    Log.d(TAG, response.toString());
-                    if (!response.isSuccessful()) {
-                        Snackbar.make(view, extractErrorMessage(response), Snackbar.LENGTH_LONG).show();
-                        compoundButton.setEnabled(true);
-                        return;
-                    }
-                    Snackbar.make(view, "Gateway " + (isCheked ? "enabled" : "disabled"), Snackbar.LENGTH_LONG).show();
-                    SharedPreferenceHelper.setSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, isCheked);
-                    boolean enabled = Boolean.TRUE.equals(Objects.requireNonNull(response.body()).data.get("enabled"));
-                    compoundButton.setChecked(enabled);
-                    if (enabled) {
-                        // Check if sticky notification is enabled
-                        if (SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false)) {
-                            TextBeeUtils.startStickyNotificationService(mContext);
-                        }
-                        // Schedule heartbeat
-                        HeartbeatManager.scheduleHeartbeat(mContext);
-                    } else {
-                        TextBeeUtils.stopStickyNotificationService(mContext);
-                        // Cancel heartbeat
-                        HeartbeatManager.cancelHeartbeat(mContext);
-                    }
-                    compoundButton.setEnabled(true);
-                }
-                @Override
-                public void onFailure(Call<RegisterDeviceResponseDTO> call, Throwable t) {
-                    Snackbar.make(view, "An error occurred :(", Snackbar.LENGTH_LONG).show();
-                    Log.e(TAG, "API_ERROR "+ t.getMessage());
-                    Log.e(TAG, "API_ERROR "+ t.getLocalizedMessage());
-                    TextBeeUtils.logException(t, "Error updating device");
-                    compoundButton.setEnabled(true);
-                }
-            });
-        });
+        bindGatewaySwitch(false);
 
         receiveSMSSwitch.setChecked(SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_RECEIVE_SMS_ENABLED_KEY, false));
         receiveSMSSwitch.setOnCheckedChangeListener((compoundButton, isCheked) -> {
@@ -810,6 +763,70 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 handleUpdateDevice();
             }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Reflect remote web disable/enable without re-firing the toggle API
+        if (gatewaySwitch != null && mContext != null) {
+            bindGatewaySwitch(true);
+        }
+    }
+
+    /**
+     * @param silentUpdate if true, only refresh the checked state (onResume / remote sync)
+     */
+    private void bindGatewaySwitch(boolean silentUpdate) {
+        if (gatewaySwitch == null) {
+            return;
+        }
+        boolean enabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
+                mContext, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false
+        );
+        gatewaySwitch.setOnCheckedChangeListener(null);
+        gatewaySwitch.setChecked(enabled);
+        gatewaySwitch.setOnCheckedChangeListener((compoundButton, isCheked) -> {
+            View view = compoundButton.getRootView();
+            compoundButton.setEnabled(false);
+            String key = apiKeyEditText.getText().toString();
+
+            RegisterDeviceInputDTO registerDeviceInput = new RegisterDeviceInputDTO();
+            registerDeviceInput.setEnabled(isCheked);
+            registerDeviceInput.setAppVersionCode(BuildConfig.VERSION_CODE);
+            registerDeviceInput.setAppVersionName(BuildConfig.VERSION_NAME);
+
+            Call<RegisterDeviceResponseDTO> apiCall = ApiManager.getApiService().updateDevice(deviceId, key, registerDeviceInput);
+            apiCall.enqueue(new Callback<RegisterDeviceResponseDTO>() {
+                @Override
+                public void onResponse(Call<RegisterDeviceResponseDTO> call, Response<RegisterDeviceResponseDTO> response) {
+                    Log.d(TAG, response.toString());
+                    if (!response.isSuccessful()) {
+                        Snackbar.make(view, extractErrorMessage(response), Snackbar.LENGTH_LONG).show();
+                        compoundButton.setEnabled(true);
+                        bindGatewaySwitch(true);
+                        return;
+                    }
+                    Snackbar.make(view, "Gateway " + (isCheked ? "enabled" : "disabled"), Snackbar.LENGTH_LONG).show();
+                    boolean serverEnabled = Boolean.TRUE.equals(Objects.requireNonNull(response.body()).data.get("enabled"));
+                    GatewayConfigSync.applyServerEnabled(mContext, serverEnabled);
+                    compoundButton.setEnabled(true);
+                    bindGatewaySwitch(true);
+                }
+
+                @Override
+                public void onFailure(Call<RegisterDeviceResponseDTO> call, Throwable t) {
+                    Snackbar.make(view, "An error occurred :(", Snackbar.LENGTH_LONG).show();
+                    Log.e(TAG, "API_ERROR " + t.getMessage());
+                    TextBeeUtils.logException(t, "Error updating device");
+                    compoundButton.setEnabled(true);
+                    bindGatewaySwitch(true);
+                }
+            });
+        });
+        if (!silentUpdate) {
+            Log.d(TAG, "Gateway switch bound, enabled=" + enabled);
         }
     }
 
