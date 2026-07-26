@@ -511,9 +511,10 @@ export class HeartbeatResponseDTO {
   @ApiProperty({
     type: Number,
     required: false,
-    description: 'Number of outbox SMS claimed during this heartbeat',
+    description:
+      'Outbound SMS waiting in the outbox for this account — the device should pull them via /claim-outbox',
   })
-  outboxClaimed?: number
+  outboxPending?: number
 
   @ApiProperty({
     type: Boolean,

@@ -48,12 +48,15 @@ describe('GatewayService', () => {
     create: jest.fn(),
     exec: jest.fn(),
     countDocuments: jest.fn(),
+    updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
   }
 
   const mockSmsModel = {
     create: jest.fn(),
     find: jest.fn(),
     findOne: jest.fn(),
+    findById: jest.fn(),
+    findByIdAndUpdate: jest.fn(),
     updateMany: jest.fn(),
     countDocuments: jest.fn(),
   }
@@ -94,6 +97,7 @@ describe('GatewayService', () => {
     claimForDevice: jest.fn().mockResolvedValue({ claimed: 0, messages: [] }),
     notifyWorkAvailable: jest.fn().mockResolvedValue(undefined),
     dispatchWaitingOutbox: jest.fn().mockResolvedValue(0),
+    countWaitingOutbox: jest.fn().mockResolvedValue(0),
     getDeviceHealthSummary: jest.fn().mockResolvedValue({
       inFlight: 0,
       recentFailures: 0,
@@ -272,6 +276,62 @@ describe('GatewayService', () => {
 
       expect(mockDeviceModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ enabled: true }),
+      )
+    })
+
+    it('should reuse the existing device row for modern app versions instead of creating a duplicate', async () => {
+      // A duplicate row keeps the same FCM token while the phone stores the new
+      // device id, so pushes get stamped with an id the app then ignores.
+      mockDeviceModel.findOne.mockResolvedValue({
+        ...mockDevice,
+        appVersionCode: 35,
+      })
+      const originalUpdateDevice = service.updateDevice
+      service.updateDevice = jest.fn().mockResolvedValue({ _id: 'device123' })
+
+      await service.registerDevice(mockDeviceInput, mockUser)
+
+      expect(service.updateDevice).toHaveBeenCalledWith(
+        'device123',
+        expect.objectContaining({ enabled: true }),
+      )
+      expect(mockDeviceModel.create).not.toHaveBeenCalled()
+
+      service.updateDevice = originalUpdateDevice
+    })
+
+    it('should reuse a device row matched by FCM token when buildId changed', async () => {
+      mockDeviceModel.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...mockDevice, buildId: 'oldBuild' })
+      const originalUpdateDevice = service.updateDevice
+      service.updateDevice = jest.fn().mockResolvedValue({ _id: 'device123' })
+
+      await service.registerDevice(mockDeviceInput, mockUser)
+
+      expect(mockDeviceModel.findOne).toHaveBeenLastCalledWith({
+        user: mockUser._id,
+        fcmToken: mockDeviceInput.fcmToken,
+      })
+      expect(mockDeviceModel.create).not.toHaveBeenCalled()
+
+      service.updateDevice = originalUpdateDevice
+    })
+
+    it('should clear the FCM token from stale duplicate rows after creating a device', async () => {
+      mockDeviceModel.findOne.mockResolvedValue(null)
+      mockBillingService.getUserLimits.mockResolvedValue({ deviceLimit: -1 })
+      mockDeviceModel.create.mockResolvedValue({ _id: 'deviceNew' })
+
+      await service.registerDevice(mockDeviceInput, mockUser)
+
+      expect(mockDeviceModel.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: mockUser._id,
+          fcmToken: mockDeviceInput.fcmToken,
+          _id: { $ne: 'deviceNew' },
+        }),
+        expect.objectContaining({ $unset: { fcmToken: '' } }),
       )
     })
 
@@ -988,6 +1048,133 @@ describe('GatewayService', () => {
         totalDeviceCount: 2,
         totalApiKeyCount: 2,
       })
+    })
+  })
+
+  describe('heartbeat', () => {
+    const mockDeviceId = 'device123'
+
+    beforeEach(() => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+      })
+      mockDeviceModel.findByIdAndUpdate.mockResolvedValue({
+        _id: mockDeviceId,
+        name: 'Pixel 6',
+        enabled: true,
+      })
+    })
+
+    it('should never claim outbox SMS on behalf of the device', async () => {
+      // The heartbeat response cannot carry SMS payloads, so claiming here
+      // would strand messages in `dispatched` with no handset holding them.
+      mockSmsOutboxService.countWaitingOutbox.mockResolvedValue(2)
+
+      const result = await service.heartbeat(mockDeviceId, {})
+
+      expect(mockSmsOutboxService.claimForDevice).not.toHaveBeenCalled()
+      expect(mockSmsOutboxService.dispatchWaitingOutbox).toHaveBeenCalledWith(20)
+      expect(mockSmsOutboxService.notifyWorkAvailable).toHaveBeenCalledWith(
+        'user123',
+      )
+      expect(result).toEqual(
+        expect.objectContaining({ success: true, outboxPending: 2 }),
+      )
+    })
+
+    it('should not wake devices when nothing is waiting', async () => {
+      mockSmsOutboxService.countWaitingOutbox.mockResolvedValue(0)
+
+      const result = await service.heartbeat(mockDeviceId, {})
+
+      expect(mockSmsOutboxService.notifyWorkAvailable).not.toHaveBeenCalled()
+      expect(result).toEqual(
+        expect.objectContaining({ outboxPending: 0, enabled: true }),
+      )
+    })
+  })
+
+  describe('updateSMSStatus device ownership', () => {
+    const deviceId = new Types.ObjectId().toString()
+    const otherDeviceId = new Types.ObjectId().toString()
+
+    beforeEach(() => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: deviceId,
+        user: 'user123',
+        enabled: true,
+      })
+      mockSmsModel.findByIdAndUpdate = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'sent',
+      })
+      mockSmsModel.find.mockResolvedValue([])
+    })
+
+    it('should accept a sent report from a device that held an earlier attempt', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: otherDeviceId,
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'SENT',
+        sentAtInMillis: Date.now(),
+      } as any)
+
+      expect(result).toEqual(
+        expect.objectContaining({ success: true, message: expect.any(String) }),
+      )
+      // the reporting handset becomes the device of record
+      expect(mockSmsModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        'sms123',
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: 'sent' }),
+        }),
+        { new: true },
+      )
+    })
+
+    it('should reject a report from a device that never held the SMS', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: otherDeviceId,
+        metadata: {},
+      })
+
+      await expect(
+        service.updateSMSStatus(deviceId, {
+          smsId: 'sms123',
+          status: 'SENT',
+        } as any),
+      ).rejects.toMatchObject({ status: HttpStatus.FORBIDDEN })
+    })
+
+    it('should record a stale failure without disturbing the current attempt', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: otherDeviceId,
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'FAILED',
+        errorCode: 'GENERIC_FAILURE',
+      } as any)
+
+      expect(
+        mockSmsOutboxService.handleSendFailureAndFailover,
+      ).not.toHaveBeenCalled()
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
     })
   })
 })

@@ -15,8 +15,16 @@ export const DEVICE_MAX_IN_FLIGHT = 5
 /** Hard max age from requestedAt (or scheduled fire time). Older SMS are canceled, never sent. */
 export const SMS_MAX_AGE_MS = 2 * 60 * 60 * 1000 // 2 hours
 
-/** How long a device may hold a claimed SMS before another device can steal it. */
+/** How long a device may hold a claimed (not yet dispatched) SMS before another device can steal it. */
 export const SMS_LEASE_MS = 2 * 60 * 1000 // 2 minutes
+
+/**
+ * Lease applied once the command is actually handed to a device (FCM accepted or
+ * pulled via claim-outbox). It must be long enough for the handset to reach the
+ * modem and report back, otherwise lease reclaim re-sends messages that are
+ * still in flight.
+ */
+export const SMS_DISPATCH_LEASE_MS = 10 * 60 * 1000 // 10 minutes
 
 /** Max dispatch/send attempts across devices (includes first try). */
 export const SMS_MAX_ATTEMPTS = 5

@@ -143,6 +143,23 @@ object SMSHelper {
         updateSMSStatus(context, smsDTO)
     }
 
+    /**
+     * Report that this device will not send because its gateway is switched off,
+     * so the server can fail over to another device instead of waiting.
+     */
+    @JvmStatic
+    fun reportGatewayDisabled(context: Context, smsId: String, smsBatchId: String) {
+        val smsDTO = SMSDTO().apply {
+            this.smsId = smsId
+            this.smsBatchId = smsBatchId
+            status = "FAILED"
+            failedAtInMillis = System.currentTimeMillis()
+            errorCode = "GATEWAY_DISABLED"
+            errorMessage = "Gateway is disabled on this device; command refused"
+        }
+        updateSMSStatus(context, smsDTO)
+    }
+
     private fun reportSendingError(
         context: Context,
         smsId: String,

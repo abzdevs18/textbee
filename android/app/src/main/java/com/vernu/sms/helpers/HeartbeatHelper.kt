@@ -15,6 +15,7 @@ import com.vernu.sms.BuildConfig
 import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.dtos.HeartbeatInputDTO
 import com.vernu.sms.dtos.SimInfoCollectionDTO
+import com.vernu.sms.workers.OutboxClaimWorker
 import java.io.IOException
 import java.util.Locale
 import java.util.TimeZone
@@ -132,7 +133,16 @@ object HeartbeatHelper {
                     context, AppConstants.SHARED_PREFS_LAST_HEARTBEAT_MS_KEY,
                     System.currentTimeMillis().toString()
                 )
-                Log.d(TAG, "Heartbeat sent successfully (server enabled=${body.enabled})")
+                // FCM-independent pull path: every heartbeat proves this device has
+                // network, so claim whatever is waiting instead of relying on a
+                // work_available push that may never arrive.
+                if (GatewayConfigSync.isGatewayEnabled(context)) {
+                    OutboxClaimWorker.enqueue(context)
+                }
+                Log.d(
+                    TAG,
+                    "Heartbeat sent successfully (server enabled=${body.enabled}, outboxPending=${body.outboxPending})"
+                )
                 true
             } else {
                 Log.e(TAG, "Failed to send heartbeat. Response code: ${response.code()}")

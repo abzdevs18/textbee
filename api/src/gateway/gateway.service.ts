@@ -416,7 +416,16 @@ export class GatewayService {
       model: input.model,
       buildId: input.buildId,
     } as any
-    const device = await this.deviceModel.findOne(deviceFilter)
+    let device = await this.deviceModel.findOne(deviceFilter)
+
+    // Same handset after an OS update (buildId changed) still owns its FCM
+    // token — reuse that row instead of orphaning it.
+    if (!device && input.fcmToken) {
+      device = await this.deviceModel.findOne({
+        user: user._id,
+        fcmToken: input.fcmToken,
+      } as any)
+    }
 
     const now = new Date()
     const deviceData: any = { ...input, user }
@@ -440,17 +449,57 @@ export class GatewayService {
       deviceData.fcmTokenInvalidReason = undefined
     }
 
-    if (device && device.appVersionCode <= 11) {
-      // re-enable path: updateDevice enforces the device limit on the
-      // disabled -> enabled transition
+    if (device) {
+      // Re-registering a known handset must update its existing row. Creating a
+      // second row leaves the old one enabled with the same FCM token, so the
+      // outbox pushes commands stamped with a device id the phone no longer
+      // recognises and the app silently drops them.
+      // updateDevice enforces the device limit on the disabled -> enabled transition.
       return await this.updateDevice(device._id.toString(), {
         ...deviceData,
-        enabled: true,
+        enabled: input.enabled ?? true,
       })
-    } else {
-      await this.assertDeviceLimitNotReached(user._id)
-      deviceData.enabled = input.enabled ?? true
-      return await this.deviceModel.create(deviceData)
+    }
+
+    await this.assertDeviceLimitNotReached(user._id)
+    deviceData.enabled = input.enabled ?? true
+    const created: any = await this.deviceModel.create(deviceData)
+    await this.detachFcmTokenFromOtherDevices(
+      user._id,
+      created?._id,
+      input.fcmToken,
+    )
+    return created
+  }
+
+  /**
+   * An FCM token addresses exactly one app instance. If an older device row for
+   * the same user still holds it, that row is a stale duplicate of the same
+   * handset — clear its token so device selection stops pushing into a void.
+   */
+  private async detachFcmTokenFromOtherDevices(
+    userId: any,
+    keepDeviceId: any,
+    fcmToken?: string,
+  ): Promise<void> {
+    if (!fcmToken) return
+    try {
+      await this.deviceModel.updateMany(
+        {
+          user: userId,
+          fcmToken,
+          _id: { $ne: keepDeviceId },
+        } as any,
+        {
+          $unset: { fcmToken: '' },
+          $set: {
+            fcmTokenInvalidatedAt: new Date(),
+            fcmTokenInvalidReason: 'REPLACED_BY_NEWER_DEVICE_REGISTRATION',
+          },
+        },
+      )
+    } catch (e) {
+      console.error('failed to detach duplicate FCM token', e)
     }
   }
 
@@ -512,6 +561,14 @@ export class GatewayService {
       { $set: updateData },
       { new: true },
     )
+
+    if (input.fcmToken) {
+      await this.detachFcmTokenFromOtherDevices(
+        device.user,
+        device._id,
+        input.fcmToken,
+      )
+    }
 
     // When web/API toggles gateway, push config so the phone switch updates immediately
     if (updated && previousEnabled !== !!updated.enabled) {
@@ -1701,8 +1758,19 @@ export class GatewayService {
       )
     }
 
-    // Verify the SMS belongs to this device (or was reassigned mid-flight)
-    if (sms.device.toString() !== deviceId) {
+    // Verify the SMS belongs to this device, or was actually handed to it on an
+    // earlier attempt. A reassignment (lease reclaim / failover) must not throw
+    // away the real handset outcome — otherwise the row stays `dispatched`
+    // forever and gets re-sent.
+    const attemptedDeviceIds: string[] = (
+      ((sms.metadata as any)?.dispatchAttempts || []) as any[]
+    )
+      .map((attempt) => String(attempt?.deviceId || ''))
+      .filter(Boolean)
+    const ownsSms = sms.device?.toString() === deviceId
+    const attemptedSms = attemptedDeviceIds.includes(deviceId)
+
+    if (!ownsSms && !attemptedSms) {
       throw new HttpException(
         {
           success: false,
@@ -1748,6 +1816,28 @@ export class GatewayService {
       return {
         success: true,
         message: 'SMS already canceled; ignoring later status',
+        ignored: true,
+      }
+    }
+
+    // A stale device reporting failure must not disturb the attempt that now
+    // owns the SMS — only remember that this device could not send it.
+    if (normalizedStatus === 'failed' && !ownsSms) {
+      await this.smsModel.findByIdAndUpdate(dto.smsId, {
+        $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
+        $set: {
+          'metadata.staleDeviceFailure': {
+            at: new Date(),
+            deviceId,
+            errorCode: dto.errorCode,
+            errorMessage: dto.errorMessage,
+          },
+        },
+      })
+      return {
+        success: true,
+        message:
+          'Failure recorded for a device that no longer owns this SMS; current attempt untouched',
         ignored: true,
       }
     }
@@ -1810,6 +1900,15 @@ export class GatewayService {
 
     const updateData: any = {
       status: normalizedStatus,
+    }
+
+    // The handset that actually sent it is the device of record.
+    if (!ownsSms && ['sent', 'delivered'].includes(normalizedStatus)) {
+      updateData.device = new Types.ObjectId(deviceId)
+      updateData['metadata.reportedByPreviousAttempt'] = {
+        at: new Date(),
+        deviceId,
+      }
     }
 
     if (normalizedStatus === 'sent' && dto.sentAtInMillis) {
@@ -2088,18 +2187,30 @@ export class GatewayService {
       $set: updateData,
     })
 
+    if (fcmTokenUpdated) {
+      await this.detachFcmTokenFromOtherDevices(
+        device.user,
+        device._id,
+        input.fcmToken,
+      )
+    }
+
     // Fetch updated device to get current name
     const updatedDevice = await this.deviceModel.findById(deviceId)
 
-    // Device is alive — only claim/dispatch when gateway is enabled on server
-    let claimed = 0
+    // Device is alive — only dispatch when gateway is enabled on server.
+    // Never claim on behalf of the device here: the heartbeat response cannot
+    // carry SMS payloads, so a claim would mark messages `dispatched` with no
+    // handset holding them. The device pulls its own work via /claim-outbox.
+    let outboxPending = 0
     const gatewayEnabled = updatedDevice?.enabled !== false
     if (gatewayEnabled) {
       try {
         await this.smsOutboxService.dispatchWaitingOutbox(20)
-        const claim = await this.smsOutboxService.claimForDevice(deviceId, 3)
-        claimed = claim.claimed
-        if (claimed === 0) {
+        outboxPending = await this.smsOutboxService.countWaitingOutbox(
+          device.user,
+        )
+        if (outboxPending > 0) {
           await this.smsOutboxService.notifyWorkAvailable(device.user)
         }
       } catch (e) {
@@ -2112,7 +2223,7 @@ export class GatewayService {
       fcmTokenUpdated,
       lastHeartbeat: now,
       name: updatedDevice?.name,
-      outboxClaimed: claimed,
+      outboxPending,
       enabled: gatewayEnabled,
     }
   }

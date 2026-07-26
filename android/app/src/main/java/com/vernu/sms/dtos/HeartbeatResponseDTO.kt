@@ -7,5 +7,6 @@ class HeartbeatResponseDTO {
     @JvmField var name: String? = null
     /** Server source of truth for gateway on/off (web can disable remotely). */
     @JvmField var enabled: Boolean? = null
-    @JvmField var outboxClaimed: Int = 0
+    /** Outbound SMS waiting in the central outbox — pull them via claim-outbox. */
+    @JvmField var outboxPending: Int = 0
 }

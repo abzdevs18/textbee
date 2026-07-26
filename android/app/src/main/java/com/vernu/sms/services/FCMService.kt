@@ -90,7 +90,13 @@ class FCMService : FirebaseMessagingService() {
             }
 
             if (!GatewayConfigSync.isGatewayEnabled(this)) {
-                Log.w(TAG, "Ignoring SMS command — gateway disabled on this device")
+                // Tell the server instead of dropping silently, otherwise the SMS
+                // sits in `dispatched` until it expires.
+                Log.w(TAG, "Refusing SMS command — gateway disabled on this device")
+                val id = smsPayload.smsId
+                if (!id.isNullOrBlank()) {
+                    SMSHelper.reportGatewayDisabled(this, id, smsPayload.smsBatchId ?: "")
+                }
                 return
             }
 

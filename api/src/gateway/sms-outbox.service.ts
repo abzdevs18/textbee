@@ -19,6 +19,7 @@ import {
   SMS_ERROR_EXPIRED,
   SMS_ERROR_MAX_ATTEMPTS,
   SMS_ERROR_NO_DEVICE,
+  SMS_DISPATCH_LEASE_MS,
   SMS_LEASE_MS,
   SMS_MAX_AGE_MS,
   SMS_MAX_ATTEMPTS,
@@ -518,11 +519,18 @@ export class SmsOutboxService {
         const first = response.responses[0]
 
         if (first?.success) {
+          const dispatchedAt = new Date()
           await this.smsModel.findByIdAndUpdate(smsId, {
             $set: {
               status: 'dispatched',
-              dispatchedAt: new Date(),
+              dispatchedAt,
               device: device._id,
+              // Hold the lease for the full handset deadline. Without this the
+              // 2-minute claim lease expires while the SMS is still in flight
+              // and the maintenance cron re-dispatches it (duplicate sends and
+              // a permanently refreshed dispatchedAt).
+              leasedAt: dispatchedAt,
+              leasedUntil: new Date(dispatchedAt.getTime() + SMS_DISPATCH_LEASE_MS),
             },
           })
           this.deviceModel
@@ -717,11 +725,14 @@ export class SmsOutboxService {
 
       // Device sends locally from claim response only (no FCM echo — avoids double send)
       try {
+        const dispatchedAt = new Date()
         await this.smsModel.findByIdAndUpdate(claimed._id, {
           $set: {
             status: 'dispatched',
-            dispatchedAt: new Date(),
+            dispatchedAt,
             device: device._id,
+            leasedAt: dispatchedAt,
+            leasedUntil: new Date(dispatchedAt.getTime() + SMS_DISPATCH_LEASE_MS),
           },
         })
 
@@ -842,6 +853,33 @@ export class SmsOutboxService {
     } catch (e: any) {
       this.logger.warn(`notifyWorkAvailable failed: ${e?.message}`)
     }
+  }
+
+  /**
+   * How much unclaimed, still-sendable work a user has waiting right now.
+   */
+  async countWaitingOutbox(userId: any): Promise<number> {
+    const now = new Date()
+    return this.smsModel.countDocuments({
+      user: userId,
+      type: SMSType.SENT,
+      status: 'pending',
+      expiresAt: { $gt: now },
+      $or: [
+        { leasedUntil: null },
+        { leasedUntil: { $exists: false } },
+        { leasedUntil: { $lte: now } },
+      ],
+      $and: [
+        {
+          $or: [
+            { scheduledAt: null },
+            { scheduledAt: { $exists: false } },
+            { scheduledAt: { $lte: now } },
+          ],
+        },
+      ],
+    })
   }
 
   /**
