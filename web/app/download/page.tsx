@@ -15,14 +15,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 
 const androidRelease = {
-  version: '2.8.18',
-  versionCode: 36,
-  releasedAt: 'July 21, 2026',
+  version: '2.8.19',
+  versionCode: 37,
+  releasedAt: 'July 27, 2026',
   minimumAndroid: 'Android 5.1+',
-  fileName: 'gabay-sms-2.8.18.apk',
+  fileName: 'gabay-sms-2.8.19.apk',
   fileSize: '13.81 MB',
-  downloadUrl: '/downloads/gabay-sms-2.8.18.apk',
-  sha256: '7036F9DC87E0352871226A1DBF20C66AC0B1AE6041A5D91971FFDAC577452FBC',
+  downloadUrl: '/downloads/gabay-sms-2.8.19.apk',
+  sha256: '189B9DB633142C7FE1FDB205C4F304EE80D3320FC34320860982E39F77B19E1C',
 }
 
 const installationSteps = [
