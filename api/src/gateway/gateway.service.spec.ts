@@ -199,7 +199,7 @@ describe('GatewayService', () => {
       appVersionCode: 11,
     }
 
-    it('should update device if it already exists', async () => {
+    it('should update the device that already owns this FCM token', async () => {
       mockDeviceModel.findOne.mockResolvedValue(mockDevice)
       mockDeviceModel.findByIdAndUpdate.mockResolvedValue({
         ...mockDevice,
@@ -219,8 +219,7 @@ describe('GatewayService', () => {
 
       expect(mockDeviceModel.findOne).toHaveBeenCalledWith({
         user: mockUser._id,
-        model: mockDeviceInput.model,
-        buildId: mockDeviceInput.buildId,
+        fcmToken: mockDeviceInput.fcmToken,
       })
       expect(service.updateDevice).toHaveBeenCalledWith(
         mockDevice._id.toString(),
@@ -247,8 +246,7 @@ describe('GatewayService', () => {
 
       expect(mockDeviceModel.findOne).toHaveBeenCalledWith({
         user: mockUser._id,
-        model: mockDeviceInput.model,
-        buildId: mockDeviceInput.buildId,
+        fcmToken: mockDeviceInput.fcmToken,
       })
       expect(mockDeviceModel.create).toHaveBeenCalledWith({
         ...mockDeviceInput,
@@ -279,13 +277,42 @@ describe('GatewayService', () => {
       )
     })
 
-    it('should reuse the existing device row for modern app versions instead of creating a duplicate', async () => {
-      // A duplicate row keeps the same FCM token while the phone stores the new
-      // device id, so pushes get stamped with an id the app then ignores.
-      mockDeviceModel.findOne.mockResolvedValue({
-        ...mockDevice,
-        appVersionCode: 35,
-      })
+    it('should create a separate row for a second identical phone', async () => {
+      // Two handsets of the same model on the same ROM share model+buildId.
+      // Matching on those would hand phone B the row belonging to phone A, and
+      // phone A then vanishes from the account.
+      const otherPhone = {
+        _id: 'devicePhoneA',
+        model: 'Pixel 6',
+        buildId: 'build123',
+        fcmToken: 'tokenPhoneA',
+        appVersionCode: 37,
+      }
+      mockDeviceModel.findOne
+        .mockResolvedValueOnce(null) // no row owns this token
+        .mockResolvedValueOnce(otherPhone) // same model/buildId, different phone
+      mockBillingService.getUserLimits.mockResolvedValue({ deviceLimit: -1 })
+      mockDeviceModel.create.mockResolvedValue({ _id: 'devicePhoneB' })
+      const originalUpdateDevice = service.updateDevice
+      service.updateDevice = jest.fn()
+
+      await service.registerDevice(
+        { ...mockDeviceInput, fcmToken: 'tokenPhoneB' },
+        mockUser,
+      )
+
+      expect(service.updateDevice).not.toHaveBeenCalled()
+      expect(mockDeviceModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ fcmToken: 'tokenPhoneB' }),
+      )
+
+      service.updateDevice = originalUpdateDevice
+    })
+
+    it('should still re-enable a legacy client row matched by model and buildId', async () => {
+      mockDeviceModel.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...mockDevice, appVersionCode: 11 })
       const originalUpdateDevice = service.updateDevice
       service.updateDevice = jest.fn().mockResolvedValue({ _id: 'device123' })
 
@@ -295,24 +322,6 @@ describe('GatewayService', () => {
         'device123',
         expect.objectContaining({ enabled: true }),
       )
-      expect(mockDeviceModel.create).not.toHaveBeenCalled()
-
-      service.updateDevice = originalUpdateDevice
-    })
-
-    it('should reuse a device row matched by FCM token when buildId changed', async () => {
-      mockDeviceModel.findOne
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ ...mockDevice, buildId: 'oldBuild' })
-      const originalUpdateDevice = service.updateDevice
-      service.updateDevice = jest.fn().mockResolvedValue({ _id: 'device123' })
-
-      await service.registerDevice(mockDeviceInput, mockUser)
-
-      expect(mockDeviceModel.findOne).toHaveBeenLastCalledWith({
-        user: mockUser._id,
-        fcmToken: mockDeviceInput.fcmToken,
-      })
       expect(mockDeviceModel.create).not.toHaveBeenCalled()
 
       service.updateDevice = originalUpdateDevice

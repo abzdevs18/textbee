@@ -407,24 +407,33 @@ export class GatewayService {
     input: RegisterDeviceInputDTO,
     user: User,
   ): Promise<any> {
-    // Mongoose 9.6's strict types collide on the reserved `model` field name
-    // (it expects Mongoose's `Model<any>` shape, not the device's `model`
-    // schema field). Cast the filter to bypass the type check; runtime
-    // behavior is unchanged.
-    const deviceFilter = {
-      user: user._id,
-      model: input.model,
-      buildId: input.buildId,
-    } as any
-    let device = await this.deviceModel.findOne(deviceFilter)
+    // The FCM token is the only per-install identity the client sends, so it is
+    // the only safe way to recognise a handset that is re-registering. Never
+    // match on model/buildId alone: two identical phones on the same ROM share
+    // both, and reusing that row hands the second phone the first phone's
+    // device record (the first device then disappears from the account).
+    let device = input.fcmToken
+      ? await this.deviceModel.findOne({
+          user: user._id,
+          fcmToken: input.fcmToken,
+        } as any)
+      : null
 
-    // Same handset after an OS update (buildId changed) still owns its FCM
-    // token — reuse that row instead of orphaning it.
-    if (!device && input.fcmToken) {
-      device = await this.deviceModel.findOne({
+    // Legacy clients (appVersionCode <= 11) never sent a usable token; keep the
+    // original model/buildId re-enable path for them only.
+    if (!device) {
+      // Mongoose 9.6's strict types collide on the reserved `model` field name
+      // (it expects Mongoose's `Model<any>` shape, not the device's `model`
+      // schema field). Cast the filter to bypass the type check; runtime
+      // behavior is unchanged.
+      const legacyDevice = await this.deviceModel.findOne({
         user: user._id,
-        fcmToken: input.fcmToken,
+        model: input.model,
+        buildId: input.buildId,
       } as any)
+      if (legacyDevice && legacyDevice.appVersionCode <= 11) {
+        device = legacyDevice
+      }
     }
 
     const now = new Date()
@@ -450,10 +459,9 @@ export class GatewayService {
     }
 
     if (device) {
-      // Re-registering a known handset must update its existing row. Creating a
-      // second row leaves the old one enabled with the same FCM token, so the
-      // outbox pushes commands stamped with a device id the phone no longer
-      // recognises and the app silently drops them.
+      // Same app install re-registering: update its row rather than adding a
+      // second one, so the outbox never pushes to a stale device id that the
+      // phone no longer recognises.
       // updateDevice enforces the device limit on the disabled -> enabled transition.
       return await this.updateDevice(device._id.toString(), {
         ...deviceData,
