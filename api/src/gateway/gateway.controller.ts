@@ -28,6 +28,7 @@ import {
   UpdateSMSStatusDTO,
   HeartbeatInputDTO,
   HeartbeatResponseDTO,
+  AssignDeviceTenantDTO,
 } from './gateway.dto'
 import { GatewayService } from './gateway.service'
 import { CanModifyDevice } from './guards/can-modify-device.guard'
@@ -127,6 +128,23 @@ export class GatewayController {
     @Body() input: RegisterDeviceInputDTO,
   ) {
     const data = await this.gatewayService.updateDevice(deviceId, input)
+    return { data }
+  }
+
+  @ApiOperation({
+    summary:
+      'Assign or unassign this device as the dedicated Gabay SMS phone for a school/tenant',
+  })
+  @UseGuards(AuthGuard, CanModifyDevice)
+  @Patch('/devices/:id/assignment')
+  async assignDeviceTenant(
+    @Param('id') deviceId: string,
+    @Body() input: AssignDeviceTenantDTO,
+  ) {
+    const data = await this.gatewayService.assignDeviceTenant(
+      deviceId,
+      input?.assignedTenantTag ?? null,
+    )
     return { data }
   }
 

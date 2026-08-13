@@ -185,6 +185,17 @@ export class ReceivedSMSDTO {
   receivedAtInMillis?: number
 }
 
+export class AssignDeviceTenantDTO {
+  @ApiProperty({
+    type: String,
+    required: false,
+    nullable: true,
+    description:
+      'Gabay school/tenant tag this device is dedicated to. Null or empty unassigns it back to the shared pool.',
+  })
+  assignedTenantTag?: string | null
+}
+
 export class DeviceDTO {
   @ApiProperty({ type: String })
   _id: string

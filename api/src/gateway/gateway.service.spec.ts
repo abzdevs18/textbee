@@ -438,6 +438,53 @@ describe('GatewayService', () => {
     })
   })
 
+  describe('assignDeviceTenant', () => {
+    const mockDeviceId = 'device123'
+    const mockDevice = { _id: mockDeviceId, model: 'Pixel 6' }
+
+    it('assigns a tenant tag without touching other device fields', async () => {
+      mockDeviceModel.findById.mockResolvedValue(mockDevice)
+      mockDeviceModel.findByIdAndUpdate.mockResolvedValue({
+        ...mockDevice,
+        assignedTenantTag: 'aans',
+      })
+
+      const result = await service.assignDeviceTenant(mockDeviceId, '  aans  ')
+
+      expect(mockDeviceModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockDeviceId,
+        { $set: { assignedTenantTag: 'aans' } },
+        { new: true },
+      )
+      expect(result.assignedTenantTag).toBe('aans')
+    })
+
+    it('unassigns a device back to the shared pool', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        ...mockDevice,
+        assignedTenantTag: 'aans',
+      })
+      mockDeviceModel.findByIdAndUpdate.mockResolvedValue(mockDevice)
+
+      await service.assignDeviceTenant(mockDeviceId, null)
+
+      expect(mockDeviceModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockDeviceId,
+        { $unset: { assignedTenantTag: 1 } },
+        { new: true },
+      )
+    })
+
+    it('rejects an invalid tenant tag', async () => {
+      mockDeviceModel.findById.mockResolvedValue(mockDevice)
+
+      await expect(
+        service.assignDeviceTenant(mockDeviceId, 'bad tag!'),
+      ).rejects.toThrow(HttpException)
+      expect(mockDeviceModel.findByIdAndUpdate).not.toHaveBeenCalled()
+    })
+  })
+
   describe('deleteDevice', () => {
     const mockDeviceId = '507f1f77bcf86cd799439011'
     const mockDevice = { _id: mockDeviceId, model: 'Pixel 6' }

@@ -41,6 +41,10 @@ export class Device {
   @Prop({ type: String, required: false })
   name?: string
 
+  /** Gabay school/tenant tag this phone is dedicated to. Unset = shared pool. */
+  @Prop({ type: String, required: false })
+  assignedTenantTag?: string
+
   @Prop({ type: String })
   serial: string
 

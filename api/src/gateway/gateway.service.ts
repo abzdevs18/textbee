@@ -438,6 +438,8 @@ export class GatewayService {
 
     const now = new Date()
     const deviceData: any = { ...input, user }
+    // Android register/heartbeat payloads must never create or clear a school assignment.
+    delete deviceData.assignedTenantTag
     
     // Set default name to "brand model" if not provided
     if (!deviceData.name && input.brand && input.model) {
@@ -548,6 +550,8 @@ export class GatewayService {
 
     const now = new Date()
     const updateData: any = { ...input }
+    // Assignment is owned by PATCH /devices/:id/assignment, not device register/heartbeat.
+    delete updateData.assignedTenantTag
     
     // Handle simInfo if provided
     if (input.simInfo) {
@@ -582,6 +586,50 @@ export class GatewayService {
     if (updated && previousEnabled !== !!updated.enabled) {
       this.pushDeviceConfig(updated).catch(() => undefined)
     }
+
+    return updated
+  }
+
+  async assignDeviceTenant(
+    deviceId: string,
+    assignedTenantTag?: string | null,
+  ): Promise<any> {
+    const device = await this.deviceModel.findById(deviceId)
+
+    if (!device) {
+      throw new HttpException(
+        {
+          error: 'Device not found',
+        },
+        HttpStatus.NOT_FOUND,
+      )
+    }
+
+    const normalized =
+      typeof assignedTenantTag === 'string' ? assignedTenantTag.trim() : ''
+
+    if (normalized && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(normalized)) {
+      throw new HttpException(
+        {
+          error: 'Invalid tenant tag',
+          message:
+            'assignedTenantTag must be 1-64 characters: letters, numbers, underscore, or hyphen.',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    const updated = normalized
+      ? await this.deviceModel.findByIdAndUpdate(
+          deviceId,
+          { $set: { assignedTenantTag: normalized } },
+          { new: true },
+        )
+      : await this.deviceModel.findByIdAndUpdate(
+          deviceId,
+          { $unset: { assignedTenantTag: 1 } },
+          { new: true },
+        )
 
     return updated
   }
