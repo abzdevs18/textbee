@@ -124,6 +124,87 @@ describe('SmsOutboxService', () => {
     })
   })
 
+  describe('listEligibleDevices assignment isolation', () => {
+    const tayasanId = new Types.ObjectId()
+    const evaaId = new Types.ObjectId()
+    const sharedId = new Types.ObjectId()
+
+    const tayasan = {
+      _id: tayasanId,
+      user: 'user123',
+      enabled: true,
+      fcmToken: 'tayasan-token',
+      lastHeartbeat: new Date(),
+      assignedTenantTag: 'ws_school_404617',
+    }
+    const evaa = {
+      _id: evaaId,
+      user: 'user123',
+      enabled: true,
+      fcmToken: 'evaa-token',
+      lastHeartbeat: new Date(),
+      assignedTenantTag: 'evaa',
+    }
+    const shared = {
+      _id: sharedId,
+      user: 'user123',
+      enabled: true,
+      fcmToken: 'shared-token',
+      lastHeartbeat: new Date(),
+    }
+
+    it('does not fail over a Tayasan send onto an East Visayan dedicated phone', async () => {
+      mockDeviceModel.find.mockResolvedValue([tayasan, evaa, shared])
+
+      const devices = await service.listEligibleDevices('user123', {
+        preferredDeviceId: tayasanId.toString(),
+      })
+
+      expect(devices.map((device) => device._id.toString())).toEqual([
+        tayasanId.toString(),
+      ])
+    })
+
+    it('keeps shared-pool sends on unassigned phones only', async () => {
+      mockDeviceModel.find.mockResolvedValue([tayasan, evaa, shared])
+
+      const devices = await service.listEligibleDevices('user123', {
+        preferredDeviceId: sharedId.toString(),
+      })
+
+      expect(devices.map((device) => device._id.toString())).toEqual([
+        sharedId.toString(),
+      ])
+    })
+  })
+
+  describe('claimForDevice assignment isolation', () => {
+    it('does not let a dedicated phone claim another school\'s pending SMS', async () => {
+      const evaaId = new Types.ObjectId()
+      const tayasanId = new Types.ObjectId()
+      const evaa = {
+        _id: evaaId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'evaa-token',
+        lastHeartbeat: new Date(),
+        assignedTenantTag: 'evaa',
+      }
+      mockDeviceModel.findById.mockResolvedValue(evaa)
+      mockDeviceModel.find.mockResolvedValue([evaa])
+      mockSmsModel.findOneAndUpdate
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+
+      const result = await service.claimForDevice(evaaId.toString(), 1)
+
+      expect(result.claimed).toBe(0)
+      const stealFilter = mockSmsModel.findOneAndUpdate.mock.calls[1][0]
+      expect(JSON.stringify(stealFilter)).toContain(evaaId.toString())
+      expect(JSON.stringify(stealFilter)).not.toContain(tayasanId.toString())
+    })
+  })
+
   describe('countWaitingOutbox', () => {
     it('should count only unleased, unexpired pending outbound SMS', async () => {
       mockSmsModel.countDocuments.mockResolvedValue(3)

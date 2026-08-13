@@ -47,6 +47,16 @@ function getFcmErrorCode(error: { code?: string; message?: string } | null): str
   return `FCM_DELIVERY_FAILED_${error.code}`
 }
 
+function normalizeAssignedTenantTag(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const tag = value.trim().toLowerCase()
+  return tag || null
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function getFcmErrorMessage(error: { code?: string; message?: string } | null | undefined): string {
   const code = String(error?.code || '').toLowerCase()
   if (code === 'app/no-app') {
@@ -187,8 +197,36 @@ export class SmsOutboxService {
     return { eligible: true }
   }
 
+  private sameAssignmentFilter(tag: string | null): Record<string, unknown> {
+    if (tag) {
+      return {
+        assignedTenantTag: { $regex: new RegExp(`^${escapeRegex(tag)}$`, 'i') },
+      }
+    }
+
+    return {
+      $or: [
+        { assignedTenantTag: { $exists: false } },
+        { assignedTenantTag: null },
+        { assignedTenantTag: '' },
+      ],
+    }
+  }
+
+  private async deviceIdsWithSameAssignment(
+    userId: any,
+    tag: string | null,
+  ): Promise<Types.ObjectId[]> {
+    const rows = await this.deviceModel.find({
+      user: userId,
+      ...this.sameAssignmentFilter(tag),
+    })
+    return rows.map((row) => row._id)
+  }
+
   /**
    * Rank free devices for a user. Preferred device first if eligible.
+   * Dedicated phones only share work with the same school assignment.
    */
   async listEligibleDevices(
     userId: any,
@@ -209,10 +247,26 @@ export class SmsOutboxService {
       ],
     })
 
+    let requiredAssignmentTag: string | null | undefined
+    if (opts.preferredDeviceId) {
+      const preferred =
+        devices.find((device) => String(device._id) === String(opts.preferredDeviceId)) ||
+        (await this.deviceModel.findById(opts.preferredDeviceId))
+      requiredAssignmentTag = preferred
+        ? normalizeAssignedTenantTag(preferred.assignedTenantTag)
+        : undefined
+    }
+
     const scored: Array<{ device: any; score: number }> = []
     for (const device of devices) {
       const id = device._id.toString()
       if (exclude.has(id)) continue
+      if (
+        requiredAssignmentTag !== undefined &&
+        normalizeAssignedTenantTag(device.assignedTenantTag) !== requiredAssignmentTag
+      ) {
+        continue
+      }
 
       const check = await this.isDeviceEligible(device, userId, {
         requireFreshHeartbeat: opts.requireFreshHeartbeat,
@@ -809,6 +863,19 @@ export class SmsOutboxService {
           { device: device._id },
         ],
       })
+    } else {
+      const myTag = normalizeAssignedTenantTag(device.assignedTenantTag)
+      const allowedIds = await this.deviceIdsWithSameAssignment(userId, myTag)
+      const assignmentClause: Record<string, unknown>[] = [
+        { preferredDevice: { $in: allowedIds } },
+      ]
+      if (!myTag) {
+        assignmentClause.push(
+          { preferredDevice: null },
+          { preferredDevice: { $exists: false } },
+        )
+      }
+      filter.$and.push({ $or: assignmentClause })
     }
 
     return this.smsModel.findOneAndUpdate(
