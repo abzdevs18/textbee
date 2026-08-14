@@ -44,7 +44,6 @@ type MessageListParams = {
   search?: string
   from?: string
   to?: string
-  includeHidden?: boolean
 }
 
 type QueueRehydrateResult = {
@@ -114,10 +113,6 @@ export class GatewayService {
     private smsOutboxService: SmsOutboxService,
   ) {}
 
-  private buildVisibleMessageFilter(includeHidden = false): Record<string, any> {
-    return includeHidden ? {} : { hiddenAt: { $exists: false } }
-  }
-
   private coercePage(value: unknown, fallback = 1): number {
     const parsed = Number(value)
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
@@ -169,6 +164,39 @@ export class GatewayService {
 
   private getMessageUserFilter(user: User): Record<string, any> {
     return { user: getUserObjectId(user) }
+  }
+
+  private async getMessageBatchIds(query: Record<string, any>): Promise<any[]> {
+    const batchIds = await this.smsModel.distinct('smsBatch', query)
+    return Array.isArray(batchIds) ? batchIds.filter(Boolean) : []
+  }
+
+  private async deleteOrphanedMessageBatches(
+    batchIds: any[],
+    user: User,
+  ): Promise<void> {
+    if (!batchIds.length) {
+      return
+    }
+
+    const stillReferenced = await this.smsModel.distinct('smsBatch', {
+      smsBatch: { $in: batchIds },
+    })
+    const referencedIds = new Set(
+      (Array.isArray(stillReferenced) ? stillReferenced : []).map((batchId) =>
+        batchId?.toString?.(),
+      ),
+    )
+    const orphanedBatchIds = batchIds.filter(
+      (batchId) => !referencedIds.has(batchId?.toString?.()),
+    )
+
+    if (orphanedBatchIds.length > 0) {
+      await this.smsBatchModel.deleteMany({
+        _id: { $in: orphanedBatchIds },
+        ...this.getMessageUserFilter(user),
+      })
+    }
   }
 
   private getDeviceFilterValue(deviceId?: string): Types.ObjectId | undefined {
@@ -1162,7 +1190,6 @@ export class GatewayService {
     const total = await this.smsModel.countDocuments({
       device: device._id,
       type: SMSType.RECEIVED,
-      ...this.buildVisibleMessageFilter(),
     })
 
     // @ts-ignore
@@ -1171,7 +1198,6 @@ export class GatewayService {
         {
           device: device._id,
           type: SMSType.RECEIVED,
-          ...this.buildVisibleMessageFilter(),
         },
         null,
         {
@@ -1222,7 +1248,7 @@ export class GatewayService {
     const skip = (page - 1) * limit
 
     // Build query based on type filter
-    const query: any = { device: device._id, ...this.buildVisibleMessageFilter() }
+    const query: any = { device: device._id }
 
     if (type === 'sent') {
       query.type = SMSType.SENT
@@ -1272,7 +1298,6 @@ export class GatewayService {
 
     const query: any = {
       ...this.getMessageUserFilter(user),
-      ...this.buildVisibleMessageFilter(params.includeHidden),
     }
 
     if (deviceFilterValue) {
@@ -1301,7 +1326,6 @@ export class GatewayService {
 
     const summaryBaseQuery = {
       ...this.getMessageUserFilter(user),
-      ...this.buildVisibleMessageFilter(params.includeHidden),
       ...(deviceFilterValue ? { device: deviceFilterValue } : {}),
       ...(params.type === 'sent'
         ? { type: SMSType.SENT }
@@ -1663,7 +1687,6 @@ export class GatewayService {
         _id: { $in: uniqueSmsIds },
         ...this.getMessageUserFilter(user),
         type: SMSType.SENT,
-        ...this.buildVisibleMessageFilter(false),
       })
       .populate({
         path: 'device',
@@ -1772,14 +1795,125 @@ export class GatewayService {
     }
   }
 
-  async clearMessageHistory(
+  async deleteMessage(
+    smsId: string,
+    user: User,
+  ): Promise<{ success: true; deleted: 1; smsId: string }> {
+    if (!Types.ObjectId.isValid(smsId)) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'smsId is invalid',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    const sms = await this.assertMessageBelongsToUser(smsId, user)
+    const status = String(sms.status || '').toLowerCase()
+    if (DEVICE_IN_FLIGHT_STATUSES.includes(status as any)) {
+      throw new HttpException(
+        {
+          success: false,
+          error: `Active ${status} SMS cannot be deleted. Cancel it before deleting the record.`,
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    const result = await this.smsModel.deleteOne({
+      _id: sms._id,
+      ...this.getMessageUserFilter(user),
+      status: { $nin: DEVICE_IN_FLIGHT_STATUSES },
+    })
+    const deleted = (result as any).deletedCount || (result as any).n || 0
+    if (deleted !== 1) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'SMS could not be deleted because its state changed. Refresh and try again.',
+        },
+        HttpStatus.CONFLICT,
+      )
+    }
+
+    await this.deleteOrphanedMessageBatches(
+      sms.smsBatch ? [sms.smsBatch] : [],
+      user,
+    )
+
+    return { success: true, deleted: 1, smsId }
+  }
+
+  async deleteMessages(
+    user: User,
+    smsIds: string[] = [],
+  ): Promise<{
+    success: true
+    requested: number
+    deleted: number
+    skippedActive: number
+    notFoundOrNotOwned: number
+  }> {
+    const uniqueSmsIds = Array.from(
+      new Set(
+        (smsIds || [])
+          .map((smsId) => smsId?.toString?.().trim())
+          .filter(
+            (smsId): smsId is string =>
+              Boolean(smsId && Types.ObjectId.isValid(smsId)),
+          ),
+      ),
+    ).slice(0, 100)
+
+    if (uniqueSmsIds.length === 0) {
+      throw new HttpException(
+        {
+          success: false,
+          error: 'At least one valid smsId is required',
+        },
+        HttpStatus.BAD_REQUEST,
+      )
+    }
+
+    const ownedQuery = {
+      _id: { $in: uniqueSmsIds },
+      ...this.getMessageUserFilter(user),
+    }
+    const deletableQuery = {
+      ...ownedQuery,
+      status: { $nin: DEVICE_IN_FLIGHT_STATUSES },
+    }
+    const batchIds = await this.getMessageBatchIds(deletableQuery)
+    const [skippedActive, result] = await Promise.all([
+      this.smsModel.countDocuments({
+        ...ownedQuery,
+        status: { $in: DEVICE_IN_FLIGHT_STATUSES },
+      }),
+      this.smsModel.deleteMany(deletableQuery),
+    ])
+    const deleted = (result as any).deletedCount || (result as any).n || 0
+    await this.deleteOrphanedMessageBatches(batchIds, user)
+
+    return {
+      success: true,
+      requested: uniqueSmsIds.length,
+      deleted,
+      skippedActive,
+      notFoundOrNotOwned: Math.max(
+        0,
+        uniqueSmsIds.length - deleted - skippedActive,
+      ),
+    }
+  }
+
+  async deleteMessageHistory(
     user: User,
     params: MessageListParams = {},
-  ): Promise<{ success: true; cleared: number; skippedActive: number }> {
+  ): Promise<{ success: true; deleted: number; skippedActive: number }> {
     const deviceFilterValue = this.getDeviceFilterValue(params.deviceId)
     const baseQuery: any = {
       ...this.getMessageUserFilter(user),
-      ...this.buildVisibleMessageFilter(false),
     }
 
     if (deviceFilterValue) {
@@ -1801,33 +1935,38 @@ export class GatewayService {
       Object.assign(baseQuery, searchFilter)
     }
 
-    const activeStatuses = ['pending', 'dispatched']
-    let clearQuery: any = { ...baseQuery, status: { $nin: activeStatuses } }
-    let skippedActiveQuery: any = { ...baseQuery, status: { $in: activeStatuses } }
+    let deleteQuery: any = {
+      ...baseQuery,
+      status: { $nin: DEVICE_IN_FLIGHT_STATUSES },
+    }
+    let skippedActiveQuery: any = {
+      ...baseQuery,
+      status: { $in: DEVICE_IN_FLIGHT_STATUSES },
+    }
 
     if (params.status && params.status !== 'all') {
-      if (activeStatuses.includes(params.status)) {
-        clearQuery = { ...baseQuery, status: '__never_clear_active_status__' }
+      if (DEVICE_IN_FLIGHT_STATUSES.includes(params.status as any)) {
+        deleteQuery = { ...baseQuery, status: '__never_delete_active_status__' }
         skippedActiveQuery = { ...baseQuery, status: params.status }
       } else {
-        clearQuery = { ...baseQuery, status: params.status }
-        skippedActiveQuery = { ...baseQuery, status: { $in: activeStatuses } }
+        deleteQuery = { ...baseQuery, status: params.status }
+        skippedActiveQuery = {
+          ...baseQuery,
+          status: { $in: DEVICE_IN_FLIGHT_STATUSES },
+        }
       }
     }
 
+    const batchIds = await this.getMessageBatchIds(deleteQuery)
     const [skippedActive, result] = await Promise.all([
       this.smsModel.countDocuments(skippedActiveQuery),
-      this.smsModel.updateMany(clearQuery, {
-        $set: {
-          hiddenAt: new Date(),
-          'metadata.clearedFromHistoryAt': new Date(),
-        },
-      }),
+      this.smsModel.deleteMany(deleteQuery),
     ])
+    await this.deleteOrphanedMessageBatches(batchIds, user)
 
     return {
       success: true,
-      cleared: (result as any).modifiedCount || (result as any).nModified || 0,
+      deleted: (result as any).deletedCount || (result as any).n || 0,
       skippedActive,
     }
   }

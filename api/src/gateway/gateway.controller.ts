@@ -98,10 +98,27 @@ export class GatewayController {
   }
 
   @UseGuards(AuthGuard)
-  @ApiOperation({ summary: 'Clear visible message history without deleting billing/audit records' })
+  @ApiOperation({ summary: 'Permanently delete matching non-active SMS records' })
   @Delete('/messages')
-  async clearMessageHistory(@Request() req) {
-    return this.gatewayService.clearMessageHistory(req.user, req.query)
+  async deleteMessageHistory(@Request() req) {
+    return this.gatewayService.deleteMessageHistory(req.user, req.query)
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Permanently delete selected non-active SMS records' })
+  @Post('/messages/delete')
+  async deleteMessages(
+    @Body() body: { smsIds?: string[] },
+    @Request() req,
+  ) {
+    return this.gatewayService.deleteMessages(req.user, body?.smsIds || [])
+  }
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Permanently delete one non-active SMS record' })
+  @Delete('/messages/:smsId')
+  async deleteMessage(@Param('smsId') smsId: string, @Request() req) {
+    return this.gatewayService.deleteMessage(smsId, req.user)
   }
 
   @UseGuards(AuthGuard)

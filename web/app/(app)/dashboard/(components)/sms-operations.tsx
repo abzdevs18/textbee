@@ -111,6 +111,13 @@ type ResendResponse = {
   failed: number
 }
 
+type DeleteResponse = {
+  success: boolean
+  deleted: number
+  skippedActive?: number
+  notFoundOrNotOwned?: number
+}
+
 const EMPTY_MESSAGES: SmsMessage[] = []
 
 const statusOptions = [
@@ -167,6 +174,9 @@ const isResendableMessage = (message: SmsMessage) => {
     Boolean(message.message && message.recipient)
   )
 }
+
+const isDeletableMessage = (message: SmsMessage) =>
+  !['pending', 'dispatched'].includes((message.status || '').toLowerCase())
 
 const getDateBoundaryIso = (date: string, endOfDay = false) => {
   if (!date) return undefined
@@ -233,6 +243,7 @@ export default function SmsOperations() {
   const [targetDeviceId, setTargetDeviceId] = useState('')
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([])
   const [resendDialogOpen, setResendDialogOpen] = useState(false)
+  const [resendMessageIds, setResendMessageIds] = useState<string[]>([])
   const [resendTargetDeviceId, setResendTargetDeviceId] = useState('original')
 
   const { data: devices, isLoading: isLoadingDevices } = useQuery({
@@ -322,32 +333,77 @@ export default function SmsOperations() {
     },
   })
 
-  const clearMutation = useMutation({
+  const deleteMatchingMutation = useMutation({
     mutationFn: () => {
       const params = new URLSearchParams(queryParams)
       params.delete('page')
       params.delete('limit')
       return httpBrowserClient.delete(
-        `${ApiEndpoints.gateway.clearMessages()}?${params}`,
+        `${ApiEndpoints.gateway.deleteMatchingMessages()}?${params}`,
       )
     },
     onSuccess: (response) => {
-      const cleared = response.data?.cleared ?? 0
+      const deleted = response.data?.deleted ?? 0
       const skipped = response.data?.skippedActive ?? 0
       toast({
-        title: 'History cleared from view.',
+        title: 'Message records permanently deleted.',
         description:
           skipped > 0
-            ? `${cleared} record(s) hidden. ${skipped} active pending/dispatched record(s) were kept visible.`
-            : `${cleared} record(s) hidden.`,
+            ? `${deleted} record(s) deleted. ${skipped} active pending/dispatched record(s) were protected.`
+            : `${deleted} record(s) deleted.`,
       })
       setPage(1)
+      setSelectedMessageIds([])
       invalidateMessages()
     },
     onError: (error) => {
       const formatted = formatError(error)
       toast({
-        title: 'Unable to clear history.',
+        title: 'Unable to delete message records.',
+        description: formatted.message,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const deleteSelectedMutation = useMutation({
+    mutationFn: (smsIds: string[]) =>
+      httpBrowserClient.post(ApiEndpoints.gateway.deleteMessages(), { smsIds }),
+    onSuccess: (response) => {
+      const result = (response.data || {}) as DeleteResponse
+      const deleted = result.deleted ?? 0
+      const skipped = result.skippedActive ?? 0
+      toast({
+        title: 'Selected records permanently deleted.',
+        description:
+          skipped > 0
+            ? `${deleted} record(s) deleted. ${skipped} active record(s) were protected.`
+            : `${deleted} record(s) deleted.`,
+      })
+      setSelectedMessageIds([])
+      invalidateMessages()
+    },
+    onError: (error) => {
+      const formatted = formatError(error)
+      toast({
+        title: 'Unable to delete selected records.',
+        description: formatted.message,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const deleteMessageMutation = useMutation({
+    mutationFn: (smsId: string) =>
+      httpBrowserClient.delete(ApiEndpoints.gateway.deleteMessage(smsId)),
+    onSuccess: () => {
+      toast({ title: 'Message record permanently deleted.' })
+      invalidateMessages()
+    },
+    onError: (error) => {
+      const formatted = formatError(error)
+      toast({
+        title: 'Unable to delete message record.',
         description: formatted.message,
         variant: 'destructive',
       })
@@ -380,7 +436,7 @@ export default function SmsOperations() {
         variant: resent === 0 && failed > 0 ? 'destructive' : undefined,
       })
       setResendDialogOpen(false)
-      setSelectedMessageIds([])
+      setResendMessageIds([])
       invalidateMessages()
     },
     onError: (error) => {
@@ -406,12 +462,19 @@ export default function SmsOperations() {
     () => messages.filter(isResendableMessage).map((message) => message._id),
     [messages],
   )
-  const selectedVisibleCount = selectedMessageIds.filter((smsId) =>
+  const visibleDeletableIds = useMemo(
+    () => messages.filter(isDeletableMessage).map((message) => message._id),
+    [messages],
+  )
+  const selectedResendableIds = selectedMessageIds.filter((smsId) =>
     visibleResendableIds.includes(smsId),
+  )
+  const selectedVisibleCount = selectedMessageIds.filter((smsId) =>
+    visibleDeletableIds.includes(smsId),
   ).length
   const allVisibleSelected =
-    visibleResendableIds.length > 0 &&
-    selectedVisibleCount === visibleResendableIds.length
+    visibleDeletableIds.length > 0 &&
+    selectedVisibleCount === visibleDeletableIds.length
   const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
 
   useEffect(() => {
@@ -469,9 +532,9 @@ export default function SmsOperations() {
     setSelectedMessageIds((current) => {
       const currentSet = new Set(current)
       if (checked) {
-        visibleResendableIds.forEach((smsId) => currentSet.add(smsId))
+        visibleDeletableIds.forEach((smsId) => currentSet.add(smsId))
       } else {
-        visibleResendableIds.forEach((smsId) => currentSet.delete(smsId))
+        visibleDeletableIds.forEach((smsId) => currentSet.delete(smsId))
       }
       return Array.from(currentSet)
     })
@@ -486,7 +549,10 @@ export default function SmsOperations() {
   }
 
   const openResendDialog = (smsIds = selectedMessageIds) => {
-    setSelectedMessageIds(smsIds)
+    const resendableIds = smsIds.filter((smsId) =>
+      visibleResendableIds.includes(smsId),
+    )
+    setResendMessageIds(resendableIds)
     setResendTargetDeviceId('original')
     setResendDialogOpen(true)
   }
@@ -579,8 +645,8 @@ export default function SmsOperations() {
               <Button
                 variant='outline'
                 className='rounded-lg border-[#3d8216]/30 text-[#3d8216] hover:bg-[#3d8216]/5'
-                disabled={selectedMessageIds.length === 0 || resendMutation.isPending}
-                onClick={() => openResendDialog()}
+                disabled={selectedResendableIds.length === 0 || resendMutation.isPending}
+                onClick={() => openResendDialog(selectedResendableIds)}
               >
                 {resendMutation.isPending ? (
                   <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -588,8 +654,55 @@ export default function SmsOperations() {
                   <RotateCcw className='mr-2 h-4 w-4' />
                 )}
                 Resend selected
-                {selectedMessageIds.length > 0 ? ` (${selectedMessageIds.length})` : ''}
+                {selectedResendableIds.length > 0
+                  ? ` (${selectedResendableIds.length})`
+                  : ''}
               </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant='outline'
+                    className='rounded-lg border-red-200 text-red-600 hover:bg-red-50'
+                    disabled={
+                      selectedMessageIds.length === 0 ||
+                      deleteSelectedMutation.isPending
+                    }
+                  >
+                    {deleteSelectedMutation.isPending ? (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    ) : (
+                      <Trash2 className='mr-2 h-4 w-4' />
+                    )}
+                    Delete selected
+                    {selectedMessageIds.length > 0
+                      ? ` (${selectedMessageIds.length})`
+                      : ''}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className='rounded-2xl'>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Permanently delete selected messages?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This permanently removes {selectedMessageIds.length}{' '}
+                      selected database record(s). This cannot be undone.
+                      Pending and dispatched messages are protected.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep messages</AlertDialogCancel>
+                    <AlertDialogAction
+                      className='bg-red-600 text-white hover:bg-red-700'
+                      onClick={() =>
+                        deleteSelectedMutation.mutate(selectedMessageIds)
+                      }
+                    >
+                      Delete permanently
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <Button
                 variant='outline'
                 className='rounded-lg'
@@ -608,33 +721,35 @@ export default function SmsOperations() {
                   <Button
                     variant='outline'
                     className='rounded-lg border-red-200 text-red-600 hover:bg-red-50'
-                    disabled={clearMutation.isPending || meta.total === 0}
+                    disabled={deleteMatchingMutation.isPending}
                   >
-                    {clearMutation.isPending ? (
+                    {deleteMatchingMutation.isPending ? (
                       <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                     ) : (
                       <Trash2 className='mr-2 h-4 w-4' />
                     )}
-                    Clear history
+                    Delete matching
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent className='rounded-2xl'>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Clear visible history?</AlertDialogTitle>
+                    <AlertDialogTitle>
+                      Permanently delete matching history?
+                    </AlertDialogTitle>
                     <AlertDialogDescription>
-                      This hides matching non-active messages from the dashboard.
-                      Pending and dispatched messages stay visible so you do not
-                      lose control of active sends. Billing/audit records are not
-                      physically deleted.
+                      This permanently deletes every non-active database record
+                      matching the current filters, including records hidden by
+                      the previous clear-history behavior. This cannot be undone.
+                      Pending and dispatched messages are protected.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Keep history</AlertDialogCancel>
+                    <AlertDialogCancel>Keep messages</AlertDialogCancel>
                     <AlertDialogAction
                       className='bg-red-600 text-white hover:bg-red-700'
-                      onClick={() => clearMutation.mutate()}
+                      onClick={() => deleteMatchingMutation.mutate()}
                     >
-                      Clear from view
+                      Delete permanently
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -759,7 +874,7 @@ export default function SmsOperations() {
                 <TableRow className='bg-slate-50'>
                   <TableHead className='w-10 px-4'>
                     <Checkbox
-                      aria-label='Select visible resendable SMS'
+                      aria-label='Select visible deletable SMS'
                       checked={
                         allVisibleSelected
                           ? true
@@ -767,7 +882,7 @@ export default function SmsOperations() {
                             ? 'indeterminate'
                             : false
                       }
-                      disabled={visibleResendableIds.length === 0}
+                      disabled={visibleDeletableIds.length === 0}
                       onCheckedChange={(checked) =>
                         toggleVisibleSelection(checked === true)
                       }
@@ -807,6 +922,7 @@ export default function SmsOperations() {
                     const badge = getStatusBadge(message.status)
                     const isPending = message.status === 'pending'
                     const canResend = isResendableMessage(message)
+                    const canDelete = isDeletableMessage(message)
                     const isSelected = selectedMessageIds.includes(message._id)
                     const number = message.recipient || message.sender || '—'
                     return (
@@ -815,7 +931,7 @@ export default function SmsOperations() {
                           <Checkbox
                             aria-label={`Select SMS ${number}`}
                             checked={isSelected}
-                            disabled={!canResend}
+                            disabled={!canDelete}
                             onCheckedChange={(checked) =>
                               toggleMessageSelection(message._id, checked === true)
                             }
@@ -910,6 +1026,42 @@ export default function SmsOperations() {
                             >
                               Resend
                             </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  className='rounded-lg border-red-200 text-red-600 hover:bg-red-50'
+                                  disabled={
+                                    !canDelete || deleteMessageMutation.isPending
+                                  }
+                                >
+                                  Delete
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent className='rounded-2xl'>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>
+                                    Permanently delete this message?
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This removes the SMS record from the database
+                                    and cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Keep message</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className='bg-red-600 text-white hover:bg-red-700'
+                                    onClick={() =>
+                                      deleteMessageMutation.mutate(message._id)
+                                    }
+                                  >
+                                    Delete permanently
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -961,7 +1113,7 @@ export default function SmsOperations() {
           <div className='space-y-3'>
             <div className='rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-900'>
               <p className='font-medium'>
-                {selectedMessageIds.length} SMS selected for resend
+                {resendMessageIds.length} SMS selected for resend
               </p>
               <p className='mt-1 text-xs text-emerald-800'>
                 The server will pause any device that already has 5
@@ -1000,10 +1152,10 @@ export default function SmsOperations() {
             </Button>
             <Button
               className='rounded-lg bg-[#3d8216] text-white hover:bg-[#2a5a10]'
-              disabled={selectedMessageIds.length === 0 || resendMutation.isPending}
+              disabled={resendMessageIds.length === 0 || resendMutation.isPending}
               onClick={() =>
                 resendMutation.mutate({
-                  smsIds: selectedMessageIds,
+                  smsIds: resendMessageIds,
                   targetDeviceId: resendTargetDeviceId,
                 })
               }

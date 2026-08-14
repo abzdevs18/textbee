@@ -98,9 +98,6 @@ export class SMS {
   @Prop({ type: Date })
   canceledAt: Date
 
-  @Prop({ type: Date, index: true })
-  hiddenAt: Date
-  
   @Prop({ type: String, required: false })
   errorCode: string
 

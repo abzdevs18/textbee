@@ -15,8 +15,8 @@ export default function MessagesPage() {
           </h2>
         </div>
         <p className='text-muted-foreground'>
-          Review pending SMS, reroute queued sends, and search or clear message
-          history.
+          Review pending SMS, reroute queued sends, and permanently delete
+          completed message records when cleanup is required.
         </p>
       </div>
 

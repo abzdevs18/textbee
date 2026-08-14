@@ -37,7 +37,9 @@ export const ApiEndpoints = {
     resendMessages: () => '/gateway/messages/resend',
     cancelMessage: (smsId: string) => `/gateway/messages/${smsId}/cancel`,
     rerouteMessage: (smsId: string) => `/gateway/messages/${smsId}/reroute`,
-    clearMessages: () => '/gateway/messages',
+    deleteMessage: (smsId: string) => `/gateway/messages/${smsId}`,
+    deleteMessages: () => '/gateway/messages/delete',
+    deleteMatchingMessages: () => '/gateway/messages',
 
     getWebhooks: () => '/webhooks',
     getWebhookNotifications: () => '/webhooks/notifications',

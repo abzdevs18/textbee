@@ -20,6 +20,7 @@ import { WebhookEvent } from '../webhook/webhook-event.enum'
 import { RegisterDeviceInputDTO, SendBulkSMSInputDTO, SendSMSInputDTO } from './gateway.dto'
 import { User } from '../users/schemas/user.schema'
 import { BatchResponse } from 'firebase-admin/messaging'
+import { DEVICE_IN_FLIGHT_STATUSES } from './sms-delivery.constants'
 
 // Mock firebase-admin
 jest.mock('firebase-admin', () => ({
@@ -58,12 +59,16 @@ describe('GatewayService', () => {
     findById: jest.fn(),
     findByIdAndUpdate: jest.fn(),
     updateMany: jest.fn(),
+    deleteOne: jest.fn(),
+    deleteMany: jest.fn(),
+    distinct: jest.fn().mockResolvedValue([]),
     countDocuments: jest.fn(),
   }
 
   const mockSmsBatchModel = {
     create: jest.fn(),
     findByIdAndUpdate: jest.fn(),
+    deleteMany: jest.fn(),
   }
 
   const mockDeviceTombstoneModel = {
@@ -899,13 +904,11 @@ describe('GatewayService', () => {
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
         type: SMSType.RECEIVED,
-        hiddenAt: { $exists: false },
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
           type: SMSType.RECEIVED,
-          hiddenAt: { $exists: false },
         },
         null,
         {
@@ -966,12 +969,10 @@ describe('GatewayService', () => {
       expect(mockDeviceModel.findById).toHaveBeenCalledWith(mockDeviceId)
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
-        hiddenAt: { $exists: false },
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
-          hiddenAt: { $exists: false },
         },
         null,
         {
@@ -990,13 +991,11 @@ describe('GatewayService', () => {
 
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
-        hiddenAt: { $exists: false },
         type: SMSType.SENT,
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
-          hiddenAt: { $exists: false },
           type: SMSType.SENT,
         },
         null,
@@ -1009,13 +1008,11 @@ describe('GatewayService', () => {
 
       expect(mockSmsModel.countDocuments).toHaveBeenCalledWith({
         device: mockDevice._id,
-        hiddenAt: { $exists: false },
         type: SMSType.RECEIVED,
       })
       expect(mockSmsModel.find).toHaveBeenCalledWith(
         {
           device: mockDevice._id,
-          hiddenAt: { $exists: false },
           type: SMSType.RECEIVED,
         },
         null,
@@ -1186,6 +1183,123 @@ describe('GatewayService', () => {
       expect(mockSmsOutboxService.notifyWorkAvailable).not.toHaveBeenCalled()
       expect(result).toEqual(
         expect.objectContaining({ outboxPending: 0, enabled: true }),
+      )
+    })
+  })
+
+  describe('hard delete message history', () => {
+    const userId = new Types.ObjectId().toString()
+    const user = { _id: userId } as unknown as User
+
+    it('permanently deletes one terminal SMS owned by the account', async () => {
+      const smsId = new Types.ObjectId().toString()
+      const smsBatchId = new Types.ObjectId().toString()
+      mockSmsModel.findById.mockResolvedValue({
+        _id: smsId,
+        user: userId,
+        status: 'delivered',
+        smsBatch: smsBatchId,
+      })
+      mockSmsModel.deleteOne.mockResolvedValue({ deletedCount: 1 })
+      mockSmsModel.distinct.mockResolvedValueOnce([])
+      mockSmsBatchModel.deleteMany.mockResolvedValue({ deletedCount: 1 })
+
+      await expect(service.deleteMessage(smsId, user)).resolves.toEqual({
+        success: true,
+        deleted: 1,
+        smsId,
+      })
+      expect(mockSmsModel.deleteOne).toHaveBeenCalledWith({
+        _id: smsId,
+        user: userId,
+        status: { $nin: DEVICE_IN_FLIGHT_STATUSES },
+      })
+      expect(mockSmsBatchModel.deleteMany).toHaveBeenCalledWith({
+        _id: { $in: [smsBatchId] },
+        user: userId,
+      })
+    })
+
+    it.each(['pending', 'dispatched'])(
+      'refuses to delete an active %s SMS',
+      async (status) => {
+        const smsId = new Types.ObjectId().toString()
+        mockSmsModel.findById.mockResolvedValue({
+          _id: smsId,
+          user: userId,
+          status,
+        })
+
+        await expect(service.deleteMessage(smsId, user)).rejects.toMatchObject({
+          status: HttpStatus.CONFLICT,
+        })
+        expect(mockSmsModel.deleteOne).not.toHaveBeenCalled()
+      },
+    )
+
+    it('keeps a shared batch while another SMS still references it', async () => {
+      const smsId = new Types.ObjectId().toString()
+      const smsBatchId = new Types.ObjectId().toString()
+      mockSmsModel.findById.mockResolvedValue({
+        _id: smsId,
+        user: userId,
+        status: 'failed',
+        smsBatch: smsBatchId,
+      })
+      mockSmsModel.deleteOne.mockResolvedValue({ deletedCount: 1 })
+      mockSmsModel.distinct.mockResolvedValueOnce([smsBatchId])
+
+      await service.deleteMessage(smsId, user)
+
+      expect(mockSmsBatchModel.deleteMany).not.toHaveBeenCalled()
+    })
+
+    it('hard deletes selected terminal SMS and reports protected active rows', async () => {
+      const terminalSmsId = new Types.ObjectId().toString()
+      const activeSmsId = new Types.ObjectId().toString()
+      const smsBatchId = new Types.ObjectId().toString()
+      mockSmsModel.countDocuments.mockResolvedValue(1)
+      mockSmsModel.deleteMany.mockResolvedValue({ deletedCount: 1 })
+      mockSmsModel.distinct
+        .mockResolvedValueOnce([smsBatchId])
+        .mockResolvedValueOnce([])
+      mockSmsBatchModel.deleteMany.mockResolvedValue({ deletedCount: 1 })
+
+      await expect(
+        service.deleteMessages(user, [terminalSmsId, activeSmsId]),
+      ).resolves.toEqual({
+        success: true,
+        requested: 2,
+        deleted: 1,
+        skippedActive: 1,
+        notFoundOrNotOwned: 0,
+      })
+      expect(mockSmsModel.deleteMany).toHaveBeenCalledWith({
+        _id: { $in: [terminalSmsId, activeSmsId] },
+        user: userId,
+        status: { $nin: DEVICE_IN_FLIGHT_STATUSES },
+      })
+      expect(mockSmsBatchModel.deleteMany).toHaveBeenCalledWith({
+        _id: { $in: [smsBatchId] },
+        user: userId,
+      })
+    })
+
+    it('hard deletes matching history including records hidden by the old implementation', async () => {
+      mockSmsModel.countDocuments.mockResolvedValue(2)
+      mockSmsModel.deleteMany.mockResolvedValue({ deletedCount: 7 })
+
+      await expect(service.deleteMessageHistory(user)).resolves.toEqual({
+        success: true,
+        deleted: 7,
+        skippedActive: 2,
+      })
+      expect(mockSmsModel.deleteMany).toHaveBeenCalledWith({
+        user: userId,
+        status: { $nin: DEVICE_IN_FLIGHT_STATUSES },
+      })
+      expect(mockSmsModel.deleteMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ hiddenAt: expect.anything() }),
       )
     })
   })
