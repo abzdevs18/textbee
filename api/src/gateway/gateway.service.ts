@@ -65,6 +65,40 @@ function getUserObjectId(user: User): any {
   return (user as any)?._id || (user as any)?.id
 }
 
+function normalizeTenantTag(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  const normalized = String(value).trim().toLowerCase()
+  if (!normalized) return undefined
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalized)) {
+    throw new HttpException(
+      {
+        success: false,
+        error: 'Invalid tenant tag',
+        message:
+          'tenantTag must be 1-64 characters: letters, numbers, underscore, or hyphen.',
+      },
+      HttpStatus.BAD_REQUEST,
+    )
+  }
+  return normalized
+}
+
+function assertDeviceCanAcceptTenant(device: any, tenantTag?: string): void {
+  if (!tenantTag) return
+  const deviceTenantTag = normalizeTenantTag(device?.assignedTenantTag)
+  if (deviceTenantTag && deviceTenantTag !== tenantTag) {
+    throw new HttpException(
+      {
+        success: false,
+        error: 'Device tenant assignment changed',
+        message:
+          'The selected device is now assigned to another school. Refresh the device pool and retry.',
+      },
+      HttpStatus.CONFLICT,
+    )
+  }
+}
+
 @Injectable()
 export class GatewayService {
   constructor(
@@ -731,6 +765,8 @@ export class GatewayService {
 
     const message = smsData.message || smsData.smsBody
     const recipients = smsData.recipients || smsData.receivers
+    const tenantTag = normalizeTenantTag(smsData.tenantTag)
+    assertDeviceCanAcceptTenant(device, tenantTag)
 
     if (!message) {
       throw new HttpException(
@@ -802,6 +838,7 @@ export class GatewayService {
         user: device.user,
         device: device._id,
         preferredDevice: device._id,
+        ...(tenantTag && { tenantTag }),
         smsBatch: smsBatch._id,
         message,
         type: SMSType.SENT,
@@ -889,6 +926,10 @@ export class GatewayService {
       )
     }
 
+    for (const smsData of body.messages) {
+      assertDeviceCanAcceptTenant(device, normalizeTenantTag(smsData.tenantTag))
+    }
+
     await this.billingService.canPerformAction(
       device.user.toString(),
       'bulk_send_sms',
@@ -916,6 +957,7 @@ export class GatewayService {
     for (const smsData of messages) {
       const message = smsData.message
       const recipients = smsData.recipients
+      const tenantTag = normalizeTenantTag(smsData.tenantTag)
 
       if (!message || !Array.isArray(recipients) || recipients.length === 0) {
         continue
@@ -939,6 +981,7 @@ export class GatewayService {
           user: device.user,
           device: device._id,
           preferredDevice: device._id,
+          ...(tenantTag && { tenantTag }),
           smsBatch: smsBatch._id,
           message,
           type: SMSType.SENT,

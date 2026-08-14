@@ -112,6 +112,15 @@ export class SMSData {
   })
   scheduledAt?: string
 
+  @ApiProperty({
+    type: String,
+    required: false,
+    description:
+      'Immutable tenant/school tag for outbox isolation. Device reassignment does not change this value.',
+    example: 'ws_school_404617',
+  })
+  tenantTag?: string
+
   // TODO: restructure the Payload such that it contains bactchId, smsId, recipients and message in an optimized way
   // message: string
   // bactchId: string

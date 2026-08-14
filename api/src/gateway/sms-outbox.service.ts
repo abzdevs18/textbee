@@ -224,6 +224,18 @@ export class SmsOutboxService {
     return rows.map((row) => row._id)
   }
 
+  private async assignedTenantTagsForUser(userId: any): Promise<string[]> {
+    const rows = await this.deviceModel.find({
+      user: userId,
+      assignedTenantTag: { $exists: true, $nin: [null, ''] },
+    })
+    return Array.from(new Set(
+      rows
+        .map((row) => normalizeAssignedTenantTag(row.assignedTenantTag))
+        .filter((tag): tag is string => Boolean(tag)),
+    ))
+  }
+
   /**
    * Rank free devices for a user. Preferred device first if eligible.
    * Dedicated phones only share work with the same school assignment.
@@ -232,6 +244,8 @@ export class SmsOutboxService {
     userId: any,
     opts: {
       preferredDeviceId?: string
+      /** Immutable SMS tenant affinity. Shared devices remain valid fallbacks. */
+      tenantTag?: string
       excludeDeviceIds?: string[]
       requireFreshHeartbeat?: boolean
     } = {},
@@ -247,8 +261,14 @@ export class SmsOutboxService {
       ],
     })
 
-    let requiredAssignmentTag: string | null | undefined
-    if (opts.preferredDeviceId) {
+    const messageTenantTag = normalizeAssignedTenantTag(opts.tenantTag)
+    const hasDedicatedDeviceForMessage = Boolean(
+      messageTenantTag && devices.some(
+        (device) => normalizeAssignedTenantTag(device.assignedTenantTag) === messageTenantTag,
+      ),
+    )
+    let requiredAssignmentTag: string | null | undefined = messageTenantTag || undefined
+    if (!messageTenantTag && opts.preferredDeviceId) {
       const preferred =
         devices.find((device) => String(device._id) === String(opts.preferredDeviceId)) ||
         (await this.deviceModel.findById(opts.preferredDeviceId))
@@ -261,9 +281,13 @@ export class SmsOutboxService {
     for (const device of devices) {
       const id = device._id.toString()
       if (exclude.has(id)) continue
+      const deviceTenantTag = normalizeAssignedTenantTag(device.assignedTenantTag)
       if (
         requiredAssignmentTag !== undefined &&
-        normalizeAssignedTenantTag(device.assignedTenantTag) !== requiredAssignmentTag
+        deviceTenantTag !== requiredAssignmentTag &&
+        // An unassigned phone is an intentional shared-pool worker. It can
+        // deliver a tagged message but can never redefine that message's tag.
+        !(messageTenantTag && !hasDedicatedDeviceForMessage && deviceTenantTag === null)
       ) {
         continue
       }
@@ -488,16 +512,19 @@ export class SmsOutboxService {
       sms.preferredDevice?.toString?.() ||
       sms.device?.toString?.() ||
       undefined
+    const immutableTenantTag = normalizeAssignedTenantTag(sms.tenantTag)
 
     // Prefer online devices first; if none, fall back without heartbeat requirement
     let candidates = await this.listEligibleDevices(userId, {
       preferredDeviceId: preferredId,
+      ...(immutableTenantTag ? { tenantTag: immutableTenantTag } : {}),
       excludeDeviceIds: excluded,
       requireFreshHeartbeat: true,
     })
     if (candidates.length === 0) {
       candidates = await this.listEligibleDevices(userId, {
         preferredDeviceId: preferredId,
+        ...(immutableTenantTag ? { tenantTag: immutableTenantTag } : {}),
         excludeDeviceIds: excluded,
         requireFreshHeartbeat: false,
       })
@@ -856,6 +883,56 @@ export class SmsOutboxService {
       },
     }
 
+    const myTag = normalizeAssignedTenantTag(device.assignedTenantTag)
+    const allowedIds = await this.deviceIdsWithSameAssignment(userId, myTag)
+    const legacyAssignmentClause: Record<string, unknown>[] = [
+      { preferredDevice: { $in: allowedIds } },
+    ]
+    if (!myTag) {
+      legacyAssignmentClause.push(
+        { preferredDevice: null },
+        { preferredDevice: { $exists: false } },
+      )
+    }
+
+    const assignedTenantTags = myTag
+      ? []
+      : await this.assignedTenantTagsForUser(userId)
+    const immutableTenantClause: Record<string, unknown> = myTag
+      ? { tenantTag: { $regex: new RegExp(`^${escapeRegex(myTag)}$`, 'i') } }
+      : {
+          // Shared phones may serve tenants that currently have no dedicated
+          // worker, but must not steal work from an existing dedicated pool.
+          tenantTag: {
+            $exists: true,
+            $nin: [null, '', ...assignedTenantTags],
+          },
+        }
+    const legacyTenantClause = {
+      $or: [
+        { tenantTag: { $exists: false } },
+        { tenantTag: null },
+        { tenantTag: '' },
+      ],
+    }
+
+    filter.$and.push({
+      $or: [
+        // New messages are claimed by their own immutable tenant tag. A
+        // shared device may claim any tagged SMS; another school's dedicated
+        // device cannot.
+        immutableTenantClause,
+        // Legacy rows have no tag, so preserve their old preferred-device
+        // assignment behavior until they age out of the two-hour outbox.
+        {
+          $and: [
+            legacyTenantClause,
+            { $or: legacyAssignmentClause },
+          ],
+        },
+      ],
+    })
+
     if (preferThisDevice) {
       filter.$and.push({
         $or: [
@@ -863,19 +940,6 @@ export class SmsOutboxService {
           { device: device._id },
         ],
       })
-    } else {
-      const myTag = normalizeAssignedTenantTag(device.assignedTenantTag)
-      const allowedIds = await this.deviceIdsWithSameAssignment(userId, myTag)
-      const assignmentClause: Record<string, unknown>[] = [
-        { preferredDevice: { $in: allowedIds } },
-      ]
-      if (!myTag) {
-        assignmentClause.push(
-          { preferredDevice: null },
-          { preferredDevice: { $exists: false } },
-        )
-      }
-      filter.$and.push({ $or: assignmentClause })
     }
 
     return this.smsModel.findOneAndUpdate(

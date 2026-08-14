@@ -595,6 +595,43 @@ describe('GatewayService', () => {
       )
     })
 
+    it('persists a normalized immutable tenant tag on every outbound SMS', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        ...mockDevice,
+        assignedTenantTag: 'ws_school_404617',
+      })
+      mockSmsOutboxService.dispatchMany.mockResolvedValue([
+        { smsId: 'sms123', status: 'dispatched', deviceId: mockDeviceId },
+      ])
+
+      await service.sendSMS(mockDeviceId, {
+        ...mockSmsInput,
+        tenantTag: 'WS_SCHOOL_404617',
+      })
+
+      expect(mockSmsModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantTag: 'ws_school_404617',
+          preferredDevice: mockDevice._id,
+        }),
+      )
+    })
+
+    it('rejects a stale preferred device that was reassigned to another school', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        ...mockDevice,
+        assignedTenantTag: 'evaa',
+      })
+
+      await expect(service.sendSMS(mockDeviceId, {
+        ...mockSmsInput,
+        tenantTag: 'ws_school_404617',
+      })).rejects.toThrow(HttpException)
+
+      expect(mockBillingService.canPerformAction).not.toHaveBeenCalled()
+      expect(mockSmsModel.create).not.toHaveBeenCalled()
+    })
+
     it('should throw error if device is not enabled', async () => {
       mockDeviceModel.findById.mockResolvedValue({
         ...mockDevice,

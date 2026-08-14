@@ -20,6 +20,10 @@ export class SMS {
   @Prop({ type: Types.ObjectId, ref: Device.name, required: false, index: true })
   preferredDevice?: Device | Types.ObjectId
 
+  /** Immutable school affinity captured when the SMS enters the outbox. */
+  @Prop({ type: String, required: false, index: true })
+  tenantTag?: string
+
   @Prop({ type: Types.ObjectId, ref: SMSBatch.name })
   smsBatch: SMSBatch | Types.ObjectId
 
@@ -138,3 +142,4 @@ SMSSchema.index({
   requestedAt: 1,
 })
 SMSSchema.index({ user: 1, status: 1, type: 1, preferredDevice: 1, requestedAt: 1 })
+SMSSchema.index({ user: 1, status: 1, type: 1, tenantTag: 1, requestedAt: 1 })

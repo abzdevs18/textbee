@@ -176,6 +176,53 @@ describe('SmsOutboxService', () => {
         sharedId.toString(),
       ])
     })
+
+    it('keeps a pending Tayasan SMS bound to Tayasan after its preferred phone is reassigned', async () => {
+      const replacementTayasanId = new Types.ObjectId()
+      const reassignedPreferred = {
+        ...tayasan,
+        assignedTenantTag: 'evaa',
+      }
+      const replacementTayasan = {
+        ...tayasan,
+        _id: replacementTayasanId,
+        fcmToken: 'replacement-tayasan-token',
+      }
+      mockDeviceModel.find.mockResolvedValue([
+        reassignedPreferred,
+        evaa,
+        replacementTayasan,
+        shared,
+      ])
+
+      const devices = await service.listEligibleDevices('user123', {
+        preferredDeviceId: tayasanId.toString(),
+        tenantTag: 'ws_school_404617',
+      })
+      const ids = devices.map((device) => device._id.toString())
+
+      expect(ids).toEqual([replacementTayasanId.toString()])
+      expect(ids).not.toContain(tayasanId.toString())
+      expect(ids).not.toContain(evaaId.toString())
+      expect(ids).not.toContain(sharedId.toString())
+    })
+
+    it('uses the shared pool only when no device is currently dedicated to the message tenant', async () => {
+      mockDeviceModel.find.mockResolvedValue([
+        { ...tayasan, assignedTenantTag: 'evaa' },
+        evaa,
+        shared,
+      ])
+
+      const devices = await service.listEligibleDevices('user123', {
+        preferredDeviceId: tayasanId.toString(),
+        tenantTag: 'ws_school_404617',
+      })
+
+      expect(devices.map((device) => device._id.toString())).toEqual([
+        sharedId.toString(),
+      ])
+    })
   })
 
   describe('claimForDevice assignment isolation', () => {
@@ -202,6 +249,22 @@ describe('SmsOutboxService', () => {
       const stealFilter = mockSmsModel.findOneAndUpdate.mock.calls[1][0]
       expect(JSON.stringify(stealFilter)).toContain(evaaId.toString())
       expect(JSON.stringify(stealFilter)).not.toContain(tayasanId.toString())
+      const regexes: RegExp[] = []
+      const collectRegexes = (value: any): void => {
+        if (value instanceof RegExp) {
+          regexes.push(value)
+          return
+        }
+        if (Array.isArray(value)) {
+          value.forEach(collectRegexes)
+          return
+        }
+        if (value && typeof value === 'object') {
+          Object.values(value).forEach(collectRegexes)
+        }
+      }
+      collectRegexes(stealFilter)
+      expect(regexes.map((regex) => regex.source)).toContain('^evaa$')
     })
   })
 
