@@ -15,6 +15,8 @@ import com.vernu.sms.BuildConfig
 import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.helpers.GatewayConfigSync
+import com.vernu.sms.helpers.GatewayReliability
+import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,7 +34,7 @@ data class SettingsState(
     val deviceName: String = "",
     val isGatewayEnabled: Boolean = false,
     val isReceiveSmsEnabled: Boolean = false,
-    val isStickyNotificationEnabled: Boolean = false,
+    val isStickyNotificationEnabled: Boolean = AppConstants.DEFAULT_STICKY_NOTIFICATION_ENABLED,
     val smsSendDelaySeconds: Int = AppConstants.DEFAULT_SMS_SEND_DELAY_SECONDS,
     val preferredSimSubscriptionId: Int = -1,
     val availableSims: List<SimOption> = emptyList(),
@@ -96,9 +98,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val isReceiveSms = SharedPreferenceHelper.getSharedPreferenceBoolean(
             context, AppConstants.SHARED_PREFS_RECEIVE_SMS_ENABLED_KEY, false
         )
-        val isSticky = SharedPreferenceHelper.getSharedPreferenceBoolean(
-            context, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false
-        )
+        val isSticky = GatewayReliability.isKeepAliveEnabled(context)
         val smsDelay = SharedPreferenceHelper.getSharedPreferenceInt(
             context, AppConstants.SHARED_PREFS_SMS_SEND_DELAY_SECONDS_KEY,
             AppConstants.DEFAULT_SMS_SEND_DELAY_SECONDS
@@ -167,7 +167,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             context, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, enabled
         )
         try {
-            if (enabled) TextBeeUtils.startStickyNotificationService(context)
+            if (enabled) GatewayReliability.ensureRunning(context, "settings")
             else TextBeeUtils.stopStickyNotificationService(context)
         } catch (e: Exception) {
             TextBeeUtils.logException(e, "Sticky notification toggle failed")
@@ -182,6 +182,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             context, AppConstants.SHARED_PREFS_SMS_SEND_DELAY_SECONDS_KEY, clamped
         )
         _state.update { it.copy(smsSendDelaySeconds = clamped) }
+        // The server sizes this phone's lease and in-flight cap from the delay;
+        // tell it now rather than at the next scheduled heartbeat.
+        if (_state.value.deviceId.isNotEmpty()) HeartbeatManager.triggerHeartbeat(context)
     }
 
     fun setPreferredSim(subscriptionId: Int) {
@@ -219,6 +222,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearSnackbar() = _state.update { it.copy(snackbarMessage = null) }
+
+    fun showMessage(message: String) = _state.update { it.copy(snackbarMessage = message) }
 
     private fun extractErrorMessage(response: Response<*>, fallback: String): String {
         return try {

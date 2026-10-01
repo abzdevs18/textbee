@@ -16,14 +16,20 @@ import com.vernu.sms.dtos.SimInfoDTO
 import com.vernu.sms.dtos.SubscriptionResponse
 import com.vernu.sms.dtos.UserProfile
 import com.vernu.sms.helpers.GatewayConfigSync
+import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.HeartbeatManager
+import com.vernu.sms.helpers.MessageSyncNotifier
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.helpers.serverErrorMessage
+import com.vernu.sms.outbox.OutboxStore
+import com.vernu.sms.outbox.OutboxSync
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class DashboardState(
     val deviceName: String = "",
@@ -37,7 +43,12 @@ data class DashboardState(
     val userProfile: UserProfile? = null,
     val availableSims: List<SimInfoDTO> = emptyList(),
     val isReceiveSmsEnabled: Boolean = false,
-    val userMessage: String? = null
+    val userMessage: String? = null,
+    /** True when Android battery optimization may defer or drop server pushes. */
+    val isBatteryOptimized: Boolean = false,
+    val isKeepAliveEnabled: Boolean = true,
+    /** SMS this phone holds that are not finished yet (waiting or on the radio). */
+    val pendingOnPhone: Int = 0
 )
 
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
@@ -49,8 +60,10 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
     private val gatewayConfigReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
-            if (intent?.action == GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED) {
-                loadLocalState()
+            when (intent?.action) {
+                GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED -> loadLocalState()
+                // Outbox moved (queued / sent / failed): refresh the on-phone count.
+                MessageSyncNotifier.ACTION_MESSAGES_CHANGED -> refreshReliability()
             }
         }
     }
@@ -71,7 +84,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun registerGatewayConfigReceiver() {
-        val filter = IntentFilter(GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED)
+        val filter = IntentFilter(GatewayConfigSync.ACTION_GATEWAY_CONFIG_CHANGED).apply {
+            addAction(MessageSyncNotifier.ACTION_MESSAGES_CHANGED)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(gatewayConfigReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -121,15 +136,44 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
 
-        // Sticky notification only when gateway on; heartbeat always while registered
-        // so web enable/disable can sync via heartbeat + FCM device_config.
-        if (isEnabled) {
-            TextBeeUtils.startStickyNotificationService(context)
-        }
+        // Keep-alive service + outbox poll while the gateway is on; heartbeat always
+        // while registered so web enable/disable can sync via heartbeat + FCM device_config.
         if (deviceId.isNotEmpty()) {
+            GatewayReliability.ensureRunning(context, "dashboard")
             HeartbeatManager.scheduleHeartbeat(context)
             HeartbeatManager.triggerHeartbeat(context)
+            if (isEnabled) OutboxSync.requestClaim(context, "dashboard")
         }
+        refreshReliability()
+    }
+
+    /** Re-reads battery optimization, keep-alive and the on-phone queue (call on resume). */
+    fun refreshReliability() {
+        val batteryOptimized = !GatewayReliability.isIgnoringBatteryOptimizations(context)
+        val keepAlive = GatewayReliability.isKeepAliveEnabled(context)
+        _state.update { it.copy(isBatteryOptimized = batteryOptimized, isKeepAliveEnabled = keepAlive) }
+        viewModelScope.launch {
+            val pending = withContext(Dispatchers.IO) {
+                try {
+                    OutboxStore.get(context).countActive()
+                } catch (e: Exception) {
+                    0
+                }
+            }
+            _state.update { it.copy(pendingOnPhone = pending) }
+        }
+    }
+
+    fun setKeepAlive(enabled: Boolean) {
+        SharedPreferenceHelper.setSharedPreferenceBoolean(
+            context, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, enabled
+        )
+        if (enabled) {
+            GatewayReliability.ensureRunning(context, "keep-alive-toggle")
+        } else {
+            TextBeeUtils.stopStickyNotificationService(context)
+        }
+        _state.update { it.copy(isKeepAliveEnabled = enabled) }
     }
 
     private fun fetchUserProfile() {

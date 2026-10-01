@@ -12,8 +12,10 @@ import com.vernu.sms.BuildConfig
 import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO
+import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
+import com.vernu.sms.outbox.OutboxSync
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -24,15 +26,10 @@ class BootCompletedReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-
-        val stickyNotificationEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
-            context, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false
-        )
-        if (stickyNotificationEnabled && TextBeeUtils.isPermissionGranted(context, Manifest.permission.RECEIVE_SMS)) {
-            Log.i(TAG, "Device booted, starting sticky notification service")
-            TextBeeUtils.startStickyNotificationService(context)
-        }
+        val action = intent.action
+        // MY_PACKAGE_REPLACED: an APK update stops the app until something
+        // restarts it, so treat it like a boot and bring the gateway back.
+        if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         val deviceId = SharedPreferenceHelper.getSharedPreferenceString(
             context, AppConstants.SHARED_PREFS_DEVICE_ID_KEY, ""
@@ -42,15 +39,20 @@ class BootCompletedReceiver : BroadcastReceiver() {
         ) ?: ""
 
         if (deviceId.isNotEmpty() && apiKey.isNotEmpty()) {
-            updateDeviceInfo(context, deviceId, apiKey)
-
-            val deviceEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
-                context, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false
-            )
-            if (deviceEnabled) {
-                Log.i(TAG, "Device booted, scheduling heartbeat")
-                HeartbeatManager.scheduleHeartbeat(context)
-            }
+            Log.i(TAG, "$action: restoring gateway services")
+            // After an update the immediate heartbeat already syncs the token and
+            // app version; only a reboot needs the explicit device update.
+            if (action == Intent.ACTION_BOOT_COMPLETED) updateDeviceInfo(context, deviceId, apiKey)
+            // Keep heartbeat while registered so web enable/disable can sync
+            HeartbeatManager.scheduleHeartbeat(context)
+            // Keep-alive service, outbox poll, resume anything queued locally
+            GatewayReliability.ensureRunning(context, "boot")
+            OutboxSync.requestClaim(context, "boot")
+        } else if (GatewayReliability.isKeepAliveEnabled(context) &&
+            TextBeeUtils.isPermissionGranted(context, Manifest.permission.RECEIVE_SMS)
+        ) {
+            // Not registered for sending, but keep receive-SMS forwarding alive.
+            TextBeeUtils.startStickyNotificationService(context)
         }
     }
 

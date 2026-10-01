@@ -40,6 +40,7 @@ import com.vernu.sms.helpers.GatewayConfigSync;
 import com.vernu.sms.helpers.SharedPreferenceHelper;
 import com.vernu.sms.helpers.VersionTracker;
 import com.vernu.sms.helpers.HeartbeatManager;
+import com.vernu.sms.helpers.GatewayReliability;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import com.google.gson.Gson;
 import okhttp3.ResponseBody;
@@ -119,16 +120,10 @@ public class MainActivity extends AppCompatActivity {
         crashlytics.setCustomKey("app_version", versionName);
         crashlytics.setCustomKey("app_version_code", BuildConfig.VERSION_CODE);
 
-        // Start sticky notification service if enabled
-        boolean gatewayEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_GATEWAY_ENABLED_KEY, false);
-        boolean stickyNotificationEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false);
-        if (gatewayEnabled && stickyNotificationEnabled) {
-            TextBeeUtils.startStickyNotificationService(mContext);
-            Log.d(TAG, "Starting sticky notification service on app start");
-        }
-
-        // Keep heartbeat while registered so web enable/disable can sync
+        // Keep heartbeat while registered so web enable/disable can sync; bring up
+        // the keep-alive service, outbox poll and any SMS queued on this phone.
         if (deviceId != null && !deviceId.isEmpty()) {
+            GatewayReliability.ensureRunning(mContext, "legacy-ui");
             HeartbeatManager.scheduleHeartbeat(mContext);
             Log.d(TAG, "Scheduling heartbeat on app start");
         }
@@ -177,7 +172,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Setup sticky notification switch
-        stickyNotificationSwitch.setChecked(SharedPreferenceHelper.getSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false));
+        stickyNotificationSwitch.setChecked(GatewayReliability.isKeepAliveEnabled(mContext));
         stickyNotificationSwitch.setOnCheckedChangeListener((compoundButton, isChecked) -> {
             View view = compoundButton.getRootView();
             SharedPreferenceHelper.setSharedPreferenceBoolean(mContext, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, isChecked);

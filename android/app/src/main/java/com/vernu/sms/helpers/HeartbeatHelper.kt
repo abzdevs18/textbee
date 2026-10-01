@@ -15,6 +15,7 @@ import com.vernu.sms.BuildConfig
 import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.dtos.HeartbeatInputDTO
 import com.vernu.sms.dtos.SimInfoCollectionDTO
+import com.vernu.sms.outbox.OutboxSync
 import com.vernu.sms.workers.OutboxClaimWorker
 import java.io.IOException
 import java.util.Locale
@@ -133,16 +134,22 @@ object HeartbeatHelper {
                     context, AppConstants.SHARED_PREFS_LAST_HEARTBEAT_MS_KEY,
                     System.currentTimeMillis().toString()
                 )
-                // FCM-independent pull path: every heartbeat proves this device has
-                // network, so claim whatever is waiting instead of relying on a
-                // work_available push that may never arrive.
-                if (GatewayConfigSync.isGatewayEnabled(context)) {
-                    OutboxClaimWorker.enqueue(context)
-                }
                 Log.d(
                     TAG,
                     "Heartbeat sent successfully (server enabled=${body.enabled}, outboxPending=${body.outboxPending})"
                 )
+                // FCM-independent pull path: every heartbeat proves this device has
+                // network, so claim (and resync) whatever is waiting right here
+                // instead of relying on a push that may never arrive.
+                if (GatewayConfigSync.isGatewayEnabled(context)) {
+                    try {
+                        // Falls back to OutboxClaimWorker by itself if the pull fails.
+                        OutboxSync.claimAndDispatch(context, "heartbeat")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Post-heartbeat outbox pull failed: ${e.message}")
+                        OutboxClaimWorker.enqueue(context)
+                    }
+                }
                 true
             } else {
                 Log.e(TAG, "Failed to send heartbeat. Response code: ${response.code()}")
@@ -152,7 +159,7 @@ object HeartbeatHelper {
             Log.e(TAG, "Heartbeat API call failed: ${e.message}")
             false
         } catch (e: Exception) {
-            Log.e(TAG, "Error collecting device information: ${e.message}")
+            Log.e(TAG, "Heartbeat failed (device info or response parsing): ${e.message}", e)
             false
         }
     }

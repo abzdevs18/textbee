@@ -13,9 +13,9 @@ import {
   DEVICE_FAILURE_COOLDOWN_MINUTES,
   DEVICE_FAILURE_THRESHOLD,
   DEVICE_FAILED_SEND_STATUSES,
-  DEVICE_IN_FLIGHT_STATUSES,
   DEVICE_MAX_IN_FLIGHT,
   DEVICE_ONLINE_HEARTBEAT_MS,
+  NON_RETRYABLE_DEVICE_ERRORS,
   SMS_ERROR_EXPIRED,
   SMS_ERROR_MAX_ATTEMPTS,
   SMS_ERROR_NO_DEVICE,
@@ -23,6 +23,11 @@ import {
   SMS_LEASE_MS,
   SMS_MAX_AGE_MS,
   SMS_MAX_ATTEMPTS,
+  SMS_REASON_RETRY_BACKOFF,
+  SMS_REASON_RETRY_SCHEDULED,
+  SMS_RETRY_BASE_DELAY_MS,
+  SMS_RETRY_MAX_DELAY_MS,
+  WORK_AVAILABLE_TTL_MS,
 } from './sms-delivery.constants'
 
 export type DispatchResult = {
@@ -30,6 +35,21 @@ export type DispatchResult = {
   status: 'dispatched' | 'pending' | 'canceled' | 'failed'
   deviceId?: string
   reason?: string
+}
+
+type DeviceSelectionOptions = {
+  /** Require a usable FCM token (push dispatch). Pull claims do not need one. */
+  requirePushable?: boolean
+  /** Skip in-flight and failure-cooldown checks (existence/assignment only). */
+  ignoreLoad?: boolean
+  requireFreshHeartbeat?: boolean
+}
+
+/** Mongo clause: not waiting out a retry backoff. */
+function retryWindowOpen(now: Date): Record<string, unknown> {
+  return {
+    $or: [{ nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }],
+  }
 }
 
 function getFcmErrorCode(error: { code?: string; message?: string } | null): string {
@@ -40,11 +60,53 @@ function getFcmErrorCode(error: { code?: string; message?: string } | null): str
   if (code === 'registration-token-not-registered' || code === 'unregistered') {
     return 'FCM_TOKEN_NOT_REGISTERED'
   }
-  if (code === 'invalid-registration-token' || code === 'invalid-argument') {
+  if (code === 'invalid-registration-token') {
     return 'FCM_INVALID_REGISTRATION_TOKEN'
+  }
+  if (code === 'invalid-argument') {
+    // invalid-argument also covers payload problems (e.g. message too big);
+    // only blame the device token when Firebase says the token is the issue.
+    return /registration token/i.test(String(error.message || ''))
+      ? 'FCM_INVALID_REGISTRATION_TOKEN'
+      : 'FCM_INVALID_ARGUMENT'
   }
   if (code === 'mismatched-credential') return 'FCM_PROJECT_MISMATCH'
   return `FCM_DELIVERY_FAILED_${error.code}`
+}
+
+function isRetryableDeviceFailure(errorCode?: string): boolean {
+  if (!errorCode) return true
+  if (errorCode === SMS_ERROR_EXPIRED) return false
+  return !(NON_RETRYABLE_DEVICE_ERRORS as readonly string[]).includes(
+    String(errorCode).trim().toUpperCase(),
+  )
+}
+
+function retryDelayMs(attemptCount: number): number {
+  const exponent = Math.max(0, attemptCount - 1)
+  return Math.min(SMS_RETRY_MAX_DELAY_MS, SMS_RETRY_BASE_DELAY_MS * 2 ** exponent)
+}
+
+function sendDelayMsOf(device: any): number {
+  const seconds = Number(device?.smsSendDelaySeconds)
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 3600) * 1000 : 0
+}
+
+/**
+ * Dispatch lease for a handset. It must outlast the phone's own pacing (the
+ * configured delay between sends), otherwise the lease expires while the SMS
+ * is still queued on the phone and another attempt is started.
+ */
+export function dispatchLeaseMsFor(device: any): number {
+  return Math.max(SMS_DISPATCH_LEASE_MS, 2 * sendDelayMsOf(device))
+}
+
+/** Commands a handset may hold at once so its paced queue drains well inside the lease. */
+export function maxInFlightFor(device: any): number {
+  const delayMs = sendDelayMsOf(device)
+  if (delayMs <= 0) return DEVICE_MAX_IN_FLIGHT
+  const fit = Math.floor(dispatchLeaseMsFor(device) / (2 * delayMs))
+  return Math.min(DEVICE_MAX_IN_FLIGHT, Math.max(1, fit))
 }
 
 function normalizeAssignedTenantTag(value: unknown): string | null {
@@ -97,28 +159,61 @@ export class SmsOutboxService {
     return Date.now() >= new Date(expiresAt).getTime()
   }
 
-  buildFcmMessage(sms: any, device: any): Message {
-    const expiresAtIso = sms.expiresAt
-      ? new Date(sms.expiresAt).toISOString()
+  private resolveExpiresAt(sms: any): Date {
+    return sms.expiresAt
+      ? new Date(sms.expiresAt)
       : this.computeExpiresAt(
           sms.requestedAt ? new Date(sms.requestedAt) : new Date(),
           sms.scheduledAt ? new Date(sms.scheduledAt) : null,
-        ).toISOString()
+        )
+  }
 
-    const payload = {
+  /**
+   * Command shape the handset executes, shared by FCM push and claim-outbox.
+   * `attempt` lets the phone tell a deliberate server retry from a duplicate
+   * delivery of the same attempt; `issuedAt` (server clock) lets it judge
+   * expiry without trusting its own wall clock.
+   */
+  buildDevicePayload(
+    sms: any,
+    device: any,
+    issuedAt: Date = new Date(),
+    leaseUntil?: Date | null,
+  ) {
+    const lease =
+      leaseUntil && !Number.isNaN(new Date(leaseUntil).getTime())
+        ? new Date(leaseUntil)
+        : new Date(issuedAt.getTime() + dispatchLeaseMsFor(device))
+    return {
       smsId: sms._id.toString(),
       smsBatchId: sms.smsBatch?.toString?.() || sms.smsBatch,
       deviceId: device._id.toString(),
       targetDeviceId: device._id.toString(),
       message: sms.message,
       recipients: [sms.recipient],
-      expiresAt: expiresAtIso,
-      ...(sms.simSubscriptionId !== undefined && {
-        simSubscriptionId: sms.simSubscriptionId,
-      }),
+      expiresAt: this.resolveExpiresAt(sms).toISOString(),
+      issuedAt: issuedAt.toISOString(),
+      // After this the outbox may give the SMS to another phone, so the
+      // handset must not *start* sending it later (it waits for a re-issue).
+      leaseUntil: lease.toISOString(),
+      attempt: Math.max(1, Number(sms.attemptCount) || 1),
+      ...(sms.simSubscriptionId !== undefined &&
+        sms.simSubscriptionId !== null && {
+          simSubscriptionId: sms.simSubscriptionId,
+        }),
       smsBody: sms.message,
       receivers: [sms.recipient],
     }
+  }
+
+  buildFcmMessage(sms: any, device: any): Message {
+    const issuedAt = new Date()
+    const payload = this.buildDevicePayload(sms, device, issuedAt)
+    const remainingMs = this.resolveExpiresAt(sms).getTime() - issuedAt.getTime()
+    // An undelivered command must not surface hours later (FCM default TTL is
+    // 4 weeks): after the dispatch lease the outbox re-dispatches or the
+    // phone pulls it, so a late copy could only produce a duplicate send.
+    const ttl = Math.max(1000, Math.min(dispatchLeaseMsFor(device), remainingMs))
 
     return {
       data: {
@@ -128,16 +223,33 @@ export class SmsOutboxService {
       token: device.fcmToken,
       android: {
         priority: 'high' as const,
+        ttl,
       },
     }
   }
 
+  /**
+   * Work the handset actually holds: commands handed over and not yet
+   * reported (dispatched with a live lease) plus SMS mid-claim. Pending rows
+   * merely *assigned* to the device do not count — counting them let 5+
+   * waiting rows lock the phone out of both push dispatch and pull claims.
+   */
   private async getInFlightCount(deviceId: string, userId: any): Promise<number> {
+    const now = new Date()
     return this.smsModel.countDocuments({
       user: userId,
       device: deviceId,
       type: SMSType.SENT,
-      status: { $in: [...DEVICE_IN_FLIGHT_STATUSES] },
+      $or: [
+        { status: 'dispatched', leasedUntil: { $gt: now } },
+        {
+          // Legacy rows dispatched before leases existed.
+          status: 'dispatched',
+          leasedUntil: null,
+          dispatchedAt: { $gt: new Date(now.getTime() - SMS_DISPATCH_LEASE_MS) },
+        },
+        { status: 'pending', leasedUntil: { $gt: now } },
+      ],
     })
   }
 
@@ -159,15 +271,16 @@ export class SmsOutboxService {
   async isDeviceEligible(
     device: any,
     userId: any,
-    opts: { requireFreshHeartbeat?: boolean } = {},
+    opts: DeviceSelectionOptions = {},
   ): Promise<{ eligible: boolean; reason?: string }> {
+    const requirePushable = opts.requirePushable !== false
     if (!device?.enabled) {
       return { eligible: false, reason: 'Device disabled' }
     }
-    if (!device.fcmToken) {
+    if (requirePushable && !device.fcmToken) {
       return { eligible: false, reason: 'Missing FCM token' }
     }
-    if (device.fcmTokenInvalidatedAt) {
+    if (requirePushable && device.fcmTokenInvalidatedAt) {
       return { eligible: false, reason: 'FCM token invalidated' }
     }
 
@@ -178,11 +291,16 @@ export class SmsOutboxService {
       }
     }
 
+    if (opts.ignoreLoad) {
+      return { eligible: true }
+    }
+
     const inFlight = await this.getInFlightCount(device._id.toString(), userId)
-    if (inFlight >= DEVICE_MAX_IN_FLIGHT) {
+    const cap = maxInFlightFor(device)
+    if (inFlight >= cap) {
       return {
         eligible: false,
-        reason: `In-flight cap reached (${inFlight}/${DEVICE_MAX_IN_FLIGHT})`,
+        reason: `In-flight cap reached (${inFlight}/${cap})`,
       }
     }
 
@@ -242,23 +360,25 @@ export class SmsOutboxService {
    */
   async listEligibleDevices(
     userId: any,
-    opts: {
+    opts: DeviceSelectionOptions & {
       preferredDeviceId?: string
       /** Immutable SMS tenant affinity. Shared devices remain valid fallbacks. */
       tenantTag?: string
       excludeDeviceIds?: string[]
-      requireFreshHeartbeat?: boolean
     } = {},
   ): Promise<any[]> {
     const exclude = new Set((opts.excludeDeviceIds || []).map(String))
+    const requirePushable = opts.requirePushable !== false
     const devices = await this.deviceModel.find({
       user: userId,
       enabled: true,
-      fcmToken: { $exists: true, $nin: [null, ''] },
-      $or: [
-        { fcmTokenInvalidatedAt: null },
-        { fcmTokenInvalidatedAt: { $exists: false } },
-      ],
+      ...(requirePushable && {
+        fcmToken: { $exists: true, $nin: [null, ''] },
+        $or: [
+          { fcmTokenInvalidatedAt: null },
+          { fcmTokenInvalidatedAt: { $exists: false } },
+        ],
+      }),
     })
 
     const messageTenantTag = normalizeAssignedTenantTag(opts.tenantTag)
@@ -294,11 +414,13 @@ export class SmsOutboxService {
 
       const check = await this.isDeviceEligible(device, userId, {
         requireFreshHeartbeat: opts.requireFreshHeartbeat,
+        requirePushable,
+        ignoreLoad: opts.ignoreLoad,
       })
       if (!check.eligible) continue
 
-      const inFlight = await this.getInFlightCount(id, userId)
-      const failures = await this.getRecentFailureCount(id, userId)
+      const inFlight = opts.ignoreLoad ? 0 : await this.getInFlightCount(id, userId)
+      const failures = opts.ignoreLoad ? 0 : await this.getRecentFailureCount(id, userId)
       const heartbeatAge = device.lastHeartbeat
         ? Date.now() - new Date(device.lastHeartbeat).getTime()
         : Number.MAX_SAFE_INTEGER
@@ -430,6 +552,21 @@ export class SmsOutboxService {
     smsId: string,
     extra: Record<string, any> = {},
   ): Promise<any> {
+    const unset: Record<string, ''> = {
+      leasedUntil: '',
+      leasedAt: '',
+      queueJobId: '',
+      dispatchedAt: '',
+      errorCode: '',
+      errorMessage: '',
+    }
+    // MongoDB rejects an update that $sets and $unsets the same path
+    // ("would create a conflict"). The NO_ELIGIBLE_DEVICE path passes
+    // errorCode/errorMessage, and that rejection used to abort sendSMS (500
+    // after the rows were created) and the whole outbox maintenance cron.
+    for (const key of Object.keys(extra)) {
+      delete unset[key]
+    }
     return this.smsModel.findByIdAndUpdate(
       smsId,
       {
@@ -437,16 +574,41 @@ export class SmsOutboxService {
           status: 'pending',
           ...extra,
         },
+        ...(Object.keys(unset).length > 0 && { $unset: unset }),
+      },
+      { new: true },
+    )
+  }
+
+  /**
+   * FCM could not hand the command to this device. That says nothing about the
+   * handset's ability to send, so keep the row claimable — by another device's
+   * push or by this device's own claim-outbox pull — and give the attempt
+   * back, since nothing reached a handset. (Excluding the device here used to
+   * strand the SMS on single-phone setups: its pull path skipped it forever.)
+   */
+  private async releaseAfterPushFailure(
+    smsId: string,
+    deviceId: string,
+    errorCode: string,
+    errorMessage: string,
+  ): Promise<void> {
+    await this.smsModel.findOneAndUpdate(
+      { _id: smsId, status: 'pending', attemptCount: { $gt: 0 } },
+      {
+        $set: {
+          status: 'pending',
+          errorCode,
+          errorMessage,
+          'metadata.lastPushFailure': { at: new Date(), deviceId, errorCode },
+        },
+        $inc: { attemptCount: -1 },
         $unset: {
           leasedUntil: '',
           leasedAt: '',
-          queueJobId: '',
           dispatchedAt: '',
-          errorCode: '',
-          errorMessage: '',
         },
       },
-      { new: true },
     )
   }
 
@@ -489,6 +651,11 @@ export class SmsOutboxService {
     // Respect future schedule
     if (sms.scheduledAt && new Date(sms.scheduledAt).getTime() > Date.now()) {
       return { smsId, status: 'pending', reason: 'Scheduled for future' }
+    }
+
+    // Respect a retry backoff set after a handset failure
+    if (sms.nextAttemptAt && new Date(sms.nextAttemptAt).getTime() > Date.now()) {
+      return { smsId, status: 'pending', reason: SMS_REASON_RETRY_BACKOFF }
     }
 
     const maxAttempts = sms.maxAttempts || SMS_MAX_ATTEMPTS
@@ -552,10 +719,15 @@ export class SmsOutboxService {
           type: SMSType.SENT,
           status: { $in: ['pending', 'dispatched'] },
           expiresAt: { $gt: now },
-          $or: [
-            { leasedUntil: null },
-            { leasedUntil: { $exists: false } },
-            { leasedUntil: { $lte: now } },
+          $and: [
+            {
+              $or: [
+                { leasedUntil: null },
+                { leasedUntil: { $exists: false } },
+                { leasedUntil: { $lte: now } },
+              ],
+            },
+            retryWindowOpen(now),
           ],
           $expr: {
             $lt: [{ $ifNull: ['$attemptCount', 0] }, { $ifNull: ['$maxAttempts', SMS_MAX_ATTEMPTS] }],
@@ -570,11 +742,13 @@ export class SmsOutboxService {
             errorCode: null,
             errorMessage: null,
           },
+          $unset: { nextAttemptAt: '' },
           $inc: { attemptCount: 1 },
           $push: {
             'metadata.dispatchAttempts': {
               at: now,
               deviceId,
+              via: 'push',
             },
           },
         },
@@ -611,7 +785,7 @@ export class SmsOutboxService {
               // and the maintenance cron re-dispatches it (duplicate sends and
               // a permanently refreshed dispatchedAt).
               leasedAt: dispatchedAt,
-              leasedUntil: new Date(dispatchedAt.getTime() + SMS_DISPATCH_LEASE_MS),
+              leasedUntil: new Date(dispatchedAt.getTime() + dispatchLeaseMsFor(device)),
             },
           })
           this.deviceModel
@@ -626,7 +800,8 @@ export class SmsOutboxService {
         const errMsg = getFcmErrorMessage(first?.error)
         this.logger.warn(`FCM failed for SMS ${smsId} on device ${deviceId}: ${errCode}`)
 
-        // Permanent token errors — invalidate device token
+        // Permanent token errors — stop pushing to this token until the
+        // handset re-registers or re-asserts it (heartbeat/update).
         if (
           errCode === 'FCM_TOKEN_NOT_REGISTERED' ||
           errCode === 'FCM_INVALID_REGISTRATION_TOKEN'
@@ -639,35 +814,15 @@ export class SmsOutboxService {
           })
         }
 
-        // Exclude this device and continue to next
-        await this.smsModel.findByIdAndUpdate(smsId, {
-          $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
-          $set: {
-            status: 'pending',
-            errorCode: errCode,
-            errorMessage: errMsg,
-          },
-          $unset: {
-            leasedUntil: '',
-            leasedAt: '',
-            dispatchedAt: '',
-          },
-        })
+        await this.releaseAfterPushFailure(smsId, deviceId, errCode, errMsg)
       } catch (error: any) {
         this.logger.error(`Dispatch exception for SMS ${smsId}`, error?.stack || error?.message)
-        await this.smsModel.findByIdAndUpdate(smsId, {
-          $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
-          $set: {
-            status: 'pending',
-            errorCode: getFcmErrorCode(error),
-            errorMessage: getFcmErrorMessage(error),
-          },
-          $unset: {
-            leasedUntil: '',
-            leasedAt: '',
-            dispatchedAt: '',
-          },
-        })
+        await this.releaseAfterPushFailure(
+          smsId,
+          deviceId,
+          getFcmErrorCode(error),
+          getFcmErrorMessage(error),
+        )
       }
     }
 
@@ -701,7 +856,15 @@ export class SmsOutboxService {
   async dispatchMany(smsIds: string[]): Promise<DispatchResult[]> {
     const results: DispatchResult[] = []
     for (const smsId of smsIds) {
-      results.push(await this.tryDispatchSms(smsId))
+      try {
+        results.push(await this.tryDispatchSms(smsId))
+      } catch (e: any) {
+        // The row is already in the outbox; the maintenance cron and device
+        // pulls will deliver it. Failing the request here made callers retry
+        // and create duplicate SMS rows.
+        this.logger.warn(`Immediate dispatch deferred for SMS ${smsId}: ${e?.message}`)
+        results.push({ smsId, status: 'pending', reason: 'DISPATCH_DEFERRED' })
+      }
     }
     return results
   }
@@ -724,6 +887,17 @@ export class SmsOutboxService {
         errorMessage || 'SMS exceeded max pending age (2 hours)',
       )
       return { smsId, status: 'canceled', reason: SMS_ERROR_EXPIRED }
+    }
+
+    // Already handled and waiting out a retry backoff: a repeated report (one
+    // FAILED per multipart part from older phones, or a retried report) must
+    // not re-exclude the only phone that can send it.
+    if (
+      String(sms.status) === 'pending' &&
+      sms.nextAttemptAt &&
+      new Date(sms.nextAttemptAt).getTime() > Date.now()
+    ) {
+      return { smsId, status: 'pending', reason: SMS_REASON_RETRY_BACKOFF }
     }
 
     const maxAttempts = sms.maxAttempts || SMS_MAX_ATTEMPTS
@@ -763,37 +937,135 @@ export class SmsOutboxService {
     }
 
     // Immediate failover to next free device
-    return this.tryDispatchSms(smsId, { excludeDeviceIds: [failedDeviceId] })
+    const result = await this.tryDispatchSms(smsId, {
+      excludeDeviceIds: [failedDeviceId],
+    })
+    if (result.status !== 'pending' || result.reason !== SMS_ERROR_NO_DEVICE) {
+      return result
+    }
+
+    // Nobody else can take it right now. If another *live* device exists
+    // (busy, or reachable only by its pull loop), keep waiting for it. Rows of
+    // phones that are off or were reinstalled never pull, so they don't count.
+    const userId = (sms.user as any)?._id || sms.user
+    const tenantTag = normalizeAssignedTenantTag(sms.tenantTag)
+    const alternatives = await this.listEligibleDevices(userId, {
+      preferredDeviceId:
+        sms.preferredDevice?.toString?.() ||
+        sms.device?.toString?.() ||
+        failedDeviceId,
+      ...(tenantTag ? { tenantTag } : {}),
+      excludeDeviceIds: [
+        failedDeviceId,
+        ...((sms.excludedDeviceIds || []).map((id: any) => id.toString())),
+      ],
+      requirePushable: false,
+      ignoreLoad: true,
+      requireFreshHeartbeat: true,
+    })
+    if (alternatives.length > 0) {
+      return result
+    }
+
+    if (isRetryableDeviceFailure(errorCode)) {
+      // The handset that failed is the only one that can send this SMS. Retry
+      // it there after a backoff; leaving it excluded kept it "pending" with
+      // no possible sender until the 2-hour cancel.
+      const delayMs = retryDelayMs(attemptCount)
+      await this.smsModel.findByIdAndUpdate(smsId, {
+        $pull: { excludedDeviceIds: new Types.ObjectId(failedDeviceId) },
+        $set: {
+          nextAttemptAt: new Date(Date.now() + delayMs),
+          errorCode: errorCode || 'DEVICE_SEND_FAILED',
+          errorMessage: `${errorMessage || 'Device reported send failure'} (retrying in ${Math.round(delayMs / 1000)}s)`,
+        },
+      })
+      return {
+        smsId,
+        status: 'pending',
+        deviceId: failedDeviceId,
+        reason: SMS_REASON_RETRY_SCHEDULED,
+      }
+    }
+
+    // Permanent failure and no other device: surface it instead of leaving a
+    // row that looks pending but can never be sent.
+    await this.markFailed(
+      smsId,
+      errorCode || 'DEVICE_SEND_FAILED',
+      errorMessage || 'Device reported a permanent send failure',
+    )
+    return { smsId, status: 'failed', reason: errorCode || 'DEVICE_SEND_FAILED' }
   }
 
   /**
-   * Device pull: atomically claim up to `limit` pending outbox SMS and return FCM-style payloads.
-   * Also used when device receives work_available push.
+   * Device pull (claim-outbox): optionally re-deliver work this device already
+   * holds, then atomically claim pending outbox SMS up to its free capacity.
+   * Triggered by work_available pushes, heartbeats and the phone's poll loop.
+   * A pull proves the handset is online, so FCM token health is irrelevant.
    */
   async claimForDevice(
     deviceId: string,
     limit = 5,
-  ): Promise<{ claimed: number; messages: any[] }> {
+    opts: { resync?: boolean } = {},
+  ): Promise<{ claimed: number; redelivered: number; messages: any[] }> {
     const device = await this.deviceModel.findById(deviceId)
     if (!device?.enabled) {
-      return { claimed: 0, messages: [] }
+      return { claimed: 0, redelivered: 0, messages: [] }
     }
 
     const userId = device.user
-    const eligibility = await this.isDeviceEligible(device, userId, {
-      requireFreshHeartbeat: false,
-    })
-    if (!eligibility.eligible) {
-      return { claimed: 0, messages: [] }
+    const now = new Date()
+    const messages: any[] = []
+
+    // A pull proves the phone is online: keep its liveness fresh for routing
+    // (fresh-heartbeat preference, single-phone retry decisions, Gabay pools).
+    this.deviceModel
+      .findByIdAndUpdate(device._id, { $set: { lastHeartbeat: now } })
+      .exec()
+      .catch(() => undefined)
+
+    // Firebase can accept a command that never reaches the app (process
+    // killed, OEM battery manager, deprioritized push). Hand the phone its
+    // still-leased work again so it is sent now rather than after the lease
+    // expires. Only clients that dedupe by smsId+attempt send `resync`. The
+    // payload carries the existing lease; it is not extended.
+    let redelivered = 0
+    if (opts.resync) {
+      const held = await this.smsModel.find(
+        {
+          user: userId,
+          device: device._id,
+          type: SMSType.SENT,
+          status: 'dispatched',
+          leasedUntil: { $gt: now },
+          expiresAt: { $gt: now },
+        },
+        null,
+        { sort: { dispatchedAt: 1 }, limit: DEVICE_MAX_IN_FLIGHT * 4 },
+      )
+      for (const sms of held || []) {
+        messages.push(this.buildDevicePayload(sms, device, now, sms.leasedUntil))
+      }
+      redelivered = messages.length
     }
 
-    const now = new Date()
-    const maxClaim = Math.min(Math.max(1, limit), DEVICE_MAX_IN_FLIGHT)
-    const messages: any[] = []
+    const eligibility = await this.isDeviceEligible(device, userId, {
+      requireFreshHeartbeat: false,
+      requirePushable: false,
+    })
+    if (!eligibility.eligible) {
+      return { claimed: 0, redelivered, messages }
+    }
+
+    const inFlight = await this.getInFlightCount(device._id.toString(), userId)
+    const capacity = Math.max(0, maxInFlightFor(device) - inFlight)
+    const maxClaim = Math.min(Math.max(1, limit), capacity)
+    let claimedCount = 0
 
     for (let i = 0; i < maxClaim; i++) {
       // Prefer SMS that prefer this device
-      let claimed =
+      const claimed =
         (await this.atomicClaimOne(device, userId, now, true)) ||
         (await this.atomicClaimOne(device, userId, now, false))
 
@@ -807,42 +1079,34 @@ export class SmsOutboxService {
       // Device sends locally from claim response only (no FCM echo — avoids double send)
       try {
         const dispatchedAt = new Date()
+        const leasedUntil = new Date(dispatchedAt.getTime() + dispatchLeaseMsFor(device))
         await this.smsModel.findByIdAndUpdate(claimed._id, {
           $set: {
             status: 'dispatched',
             dispatchedAt,
             device: device._id,
             leasedAt: dispatchedAt,
-            leasedUntil: new Date(dispatchedAt.getTime() + SMS_DISPATCH_LEASE_MS),
+            leasedUntil,
+          },
+          // Lets updateSMSStatus accept this handset's report after a reassignment.
+          $push: {
+            'metadata.dispatchAttempts': {
+              at: dispatchedAt,
+              deviceId: device._id.toString(),
+              via: 'claim',
+            },
           },
         })
 
-        const expiresAt = claimed.expiresAt
-          ? new Date(claimed.expiresAt).toISOString()
-          : this.computeExpiresAt(
-              new Date(claimed.requestedAt || Date.now()),
-              claimed.scheduledAt ? new Date(claimed.scheduledAt) : null,
-            ).toISOString()
-
-        messages.push({
-          smsId: claimed._id.toString(),
-          smsBatchId: claimed.smsBatch?.toString?.() || claimed.smsBatch,
-          deviceId: device._id.toString(),
-          targetDeviceId: device._id.toString(),
-          message: claimed.message,
-          recipients: [claimed.recipient],
-          expiresAt,
-          simSubscriptionId: claimed.simSubscriptionId,
-          smsBody: claimed.message,
-          receivers: [claimed.recipient],
-        })
+        messages.push(this.buildDevicePayload(claimed, device, dispatchedAt, leasedUntil))
+        claimedCount++
       } catch (e: any) {
         this.logger.error(`claimForDevice processing failed: ${e?.message}`)
         await this.releaseToPending(claimed._id.toString())
       }
     }
 
-    return { claimed: messages.length, messages }
+    return { claimed: claimedCount, redelivered, messages }
   }
 
   private async atomicClaimOne(
@@ -877,6 +1141,7 @@ export class SmsOutboxService {
             { excludedDeviceIds: { $size: 0 } },
           ],
         },
+        retryWindowOpen(now),
       ],
       $expr: {
         $lt: [{ $ifNull: ['$attemptCount', 0] }, { $ifNull: ['$maxAttempts', SMS_MAX_ATTEMPTS] }],
@@ -951,6 +1216,7 @@ export class SmsOutboxService {
           leasedUntil: leaseUntil,
           status: 'pending',
         },
+        $unset: { nextAttemptAt: '' },
         $inc: { attemptCount: 1 },
       },
       { new: true, sort: { requestedAt: 1 } },
@@ -975,7 +1241,13 @@ export class SmsOutboxService {
             type: 'work_available',
           },
           token: d.fcmToken,
-          android: { priority: 'high' as const },
+          android: {
+            priority: 'high' as const,
+            // Wake-ups are interchangeable: keep only the latest queued one
+            // and drop it if the phone stays unreachable for long.
+            collapseKey: 'work_available',
+            ttl: WORK_AVAILABLE_TTL_MS,
+          },
         }))
 
       if (messages.length === 0) return
@@ -986,13 +1258,9 @@ export class SmsOutboxService {
     }
   }
 
-  /**
-   * How much unclaimed, still-sendable work a user has waiting right now.
-   */
-  async countWaitingOutbox(userId: any): Promise<number> {
-    const now = new Date()
-    return this.smsModel.countDocuments({
-      user: userId,
+  /** Outbound SMS that are unclaimed and sendable right now. */
+  private waitingOutboxFilter(now: Date): Record<string, any> {
+    return {
       type: SMSType.SENT,
       status: 'pending',
       expiresAt: { $gt: now },
@@ -1009,44 +1277,64 @@ export class SmsOutboxService {
             { scheduledAt: { $lte: now } },
           ],
         },
+        retryWindowOpen(now),
       ],
+    }
+  }
+
+  /**
+   * How much unclaimed, still-sendable work a user has waiting right now.
+   */
+  async countWaitingOutbox(userId: any): Promise<number> {
+    return this.smsModel.countDocuments({
+      user: userId,
+      ...this.waitingOutboxFilter(new Date()),
     })
   }
 
   /**
-   * Drain: dispatch all waiting pending SMS for a user (or globally for cron).
+   * Drain: dispatch waiting pending SMS globally (cron, heartbeat, status
+   * reports). Rows that share a routing key with a row that just found no
+   * eligible device are skipped for the rest of the run, so one dead school
+   * phone at the head of the queue cannot starve everyone behind it.
    */
   async dispatchWaitingOutbox(limit = 50): Promise<number> {
     const now = new Date()
+    const scanLimit = Math.min(500, Math.max(limit, limit * 5))
     const waiting = await this.smsModel
-      .find({
-        type: SMSType.SENT,
-        status: 'pending',
-        expiresAt: { $gt: now },
-        $or: [
-          { leasedUntil: null },
-          { leasedUntil: { $exists: false } },
-          { leasedUntil: { $lte: now } },
-        ],
-        $and: [
-          {
-            $or: [
-              { scheduledAt: null },
-              { scheduledAt: { $exists: false } },
-              { scheduledAt: { $lte: now } },
-            ],
-          },
-        ],
-      })
+      .find(this.waitingOutboxFilter(now))
       .sort({ requestedAt: 1 })
-      .limit(limit)
-      .select('_id')
+      .limit(scanLimit)
+      .select('_id user tenantTag preferredDevice device')
       .lean()
 
     let dispatched = 0
-    for (const row of waiting) {
-      const result = await this.tryDispatchSms(row._id.toString())
-      if (result.status === 'dispatched') dispatched++
+    let attempted = 0
+    const blockedRoutes = new Set<string>()
+    for (const row of waiting as any[]) {
+      if (attempted >= limit) break
+      const route = [
+        String(row.user ?? ''),
+        normalizeAssignedTenantTag(row.tenantTag) ?? '',
+        String(row.preferredDevice ?? row.device ?? ''),
+      ].join('|')
+      if (blockedRoutes.has(route)) continue
+
+      attempted++
+      let result: DispatchResult
+      try {
+        result = await this.tryDispatchSms(row._id.toString())
+      } catch (e: any) {
+        // One bad row must not abort the drain for everyone else.
+        this.logger.warn(`dispatchWaitingOutbox: SMS ${row._id} failed: ${e?.message}`)
+        blockedRoutes.add(route)
+        continue
+      }
+      if (result.status === 'dispatched') {
+        dispatched++
+      } else if (result.status === 'pending') {
+        blockedRoutes.add(route)
+      }
     }
     return dispatched
   }

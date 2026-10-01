@@ -12,8 +12,8 @@ android {
     defaultConfig {
         minSdk 22
         targetSdk 34
-        versionCode 37
-        versionName "2.8.19"
+        versionCode 38
+        versionName "2.8.20"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
@@ -111,6 +111,8 @@ dependencies {
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     
     implementation 'androidx.work:work-runtime:2.7.1'
+    // CoroutineWorker: expedited outbox dispatch/claim jobs (getForegroundInfo on Android ≤ 11)
+    implementation 'androidx.work:work-runtime-ktx:2.7.1'
 
     // Jetpack Compose
     implementation platform('androidx.compose:compose-bom:2023.08.00')

@@ -518,9 +518,11 @@ export class GatewayService {
 
     if (input.fcmToken) {
       deviceData.fcmTokenUpdatedAt = now
-      deviceData.fcmTokenInvalidatedAt = undefined
-      deviceData.fcmTokenInvalidReason = undefined
     }
+    // Invalidation bookkeeping is server-owned. updateDevice lifts it with an
+    // explicit $unset when the handset presents a token.
+    delete deviceData.fcmTokenInvalidatedAt
+    delete deviceData.fcmTokenInvalidReason
 
     if (device) {
       // Same app install re-registering: update its row rather than adding a
@@ -623,16 +625,32 @@ export class GatewayService {
       }
     }
 
-    if (input.fcmToken && input.fcmToken !== device.fcmToken) {
+    const tokenProvided =
+      typeof input.fcmToken === 'string' && input.fcmToken.trim() !== ''
+    const tokenChanged = tokenProvided && input.fcmToken !== device.fcmToken
+    if (tokenChanged) {
       updateData.fcmTokenUpdatedAt = now
-      updateData.fcmTokenInvalidatedAt = undefined
-      updateData.fcmTokenInvalidReason = undefined
+    }
+    // Never let a client payload write the invalidation bookkeeping directly.
+    delete updateData.fcmTokenInvalidatedAt
+    delete updateData.fcmTokenInvalidReason
+
+    const updateOps: any = { $set: updateData }
+    if (tokenChanged || (tokenProvided && device.fcmTokenInvalidatedAt)) {
+      // A new token, or the handset re-asserting its current one, is the only
+      // evidence that can lift an FCM invalidation. This must be an explicit
+      // $unset: Mongoose 9 strips `$set: { field: undefined }`, which left
+      // devices flagged forever and excluded from every dispatch and claim.
+      updateOps.$unset = {
+        fcmTokenInvalidatedAt: '',
+        fcmTokenInvalidReason: '',
+      }
     }
 
     const previousEnabled = !!device.enabled
     const updated = await this.deviceModel.findByIdAndUpdate(
       deviceId,
-      { $set: updateData },
+      updateOps,
       { new: true },
     )
 
@@ -2058,15 +2076,29 @@ export class GatewayService {
       }
     }
 
+    // Attempt fencing: clients that send `attempt` (Android 2.8.20+) let us
+    // recognise a failure that belongs to an older, superseded attempt.
+    const reportedAttempt = Number(dto.attempt)
+    const staleAttempt =
+      Number.isFinite(reportedAttempt) &&
+      reportedAttempt > 0 &&
+      reportedAttempt < (Number(sms.attemptCount) || 0)
+
     // A stale device reporting failure must not disturb the attempt that now
     // owns the SMS — only remember that this device could not send it.
-    if (normalizedStatus === 'failed' && !ownsSms) {
+    if (normalizedStatus === 'failed' && (!ownsSms || staleAttempt)) {
       await this.smsModel.findByIdAndUpdate(dto.smsId, {
-        $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
+        // Excluding the *owning* device for its own superseded attempt would
+        // also bar it from the newer attempt (single-phone setups would then
+        // have no sender at all), so only exclude a previous owner.
+        ...(!ownsSms && {
+          $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
+        }),
         $set: {
           'metadata.staleDeviceFailure': {
             at: new Date(),
             deviceId,
+            ...(Number.isFinite(reportedAttempt) && { attempt: reportedAttempt }),
             errorCode: dto.errorCode,
             errorMessage: dto.errorMessage,
           },
@@ -2075,7 +2107,35 @@ export class GatewayService {
       return {
         success: true,
         message:
-          'Failure recorded for a device that no longer owns this SMS; current attempt untouched',
+          'Failure recorded for a superseded attempt or previous device; current attempt untouched',
+        ignored: true,
+      }
+    }
+
+    // A failure after the handset already reported SENT (a late multipart part
+    // from older clients) must not re-send: the recipient already has it.
+    // A repeated failure for an SMS that is already failed changes nothing.
+    // A failure for an SMS that is back in the outbox (`pending`) belongs to
+    // an attempt that was already handled — no phone holds a pending SMS — and
+    // re-running failover would re-exclude the only phone mid-backoff.
+    if (
+      normalizedStatus === 'failed' &&
+      (currentStatus === 'sent' || currentStatus === 'failed' || currentStatus === 'pending')
+    ) {
+      await this.smsModel.findByIdAndUpdate(dto.smsId, {
+        $set: {
+          'metadata.lateFailureReport': {
+            at: new Date(),
+            deviceId,
+            previousStatus: currentStatus,
+            errorCode: dto.errorCode,
+            errorMessage: dto.errorMessage,
+          },
+        },
+      })
+      return {
+        success: true,
+        message: `SMS already ${currentStatus}; failure recorded without re-sending`,
         ignored: true,
       }
     }
@@ -2162,7 +2222,7 @@ export class GatewayService {
 
     const updateOps: any = { $set: updateData }
     if (['sent', 'delivered'].includes(normalizedStatus)) {
-      updateOps.$unset = { leasedUntil: '', leasedAt: '' }
+      updateOps.$unset = { leasedUntil: '', leasedAt: '', nextAttemptAt: '' }
     }
 
     const updatedSms = await this.smsModel.findByIdAndUpdate(
@@ -2224,7 +2284,11 @@ export class GatewayService {
     }
   }
 
-  async claimOutboxForDevice(deviceId: string, limit = 5) {
+  async claimOutboxForDevice(
+    deviceId: string,
+    limit = 5,
+    opts: { resync?: boolean } = {},
+  ) {
     const device = await this.deviceModel.findById(deviceId)
     if (!device?.enabled) {
       throw new HttpException(
@@ -2232,7 +2296,13 @@ export class GatewayService {
         HttpStatus.BAD_REQUEST,
       )
     }
-    return this.smsOutboxService.claimForDevice(deviceId, limit)
+    const parsedLimit = Number(limit)
+    const safeLimit = Number.isFinite(parsedLimit)
+      ? Math.min(20, Math.max(1, Math.floor(parsedLimit)))
+      : 5
+    return this.smsOutboxService.claimForDevice(deviceId, safeLimit, {
+      resync: opts.resync === true,
+    })
   }
 
   async getStatsForUser(user: User) {
@@ -2340,14 +2410,18 @@ export class GatewayService {
     }
 
     let fcmTokenUpdated = false
+    let clearTokenInvalidation = false
 
     // Update FCM token if provided and different
     if (input.fcmToken && input.fcmToken !== device.fcmToken) {
       updateData.fcmToken = input.fcmToken
       updateData.fcmTokenUpdatedAt = now
-      updateData.fcmTokenInvalidatedAt = undefined
-      updateData.fcmTokenInvalidReason = undefined
+      clearTokenInvalidation = true
       fcmTokenUpdated = true
+    } else if (input.fcmToken && device.fcmTokenInvalidatedAt) {
+      // The handset is alive and re-asserting the token Firebase gave it.
+      // Give push another chance instead of excluding the phone forever.
+      clearTokenInvalidation = true
     }
 
     // Update receiveSMSEnabled if provided and different
@@ -2420,10 +2494,16 @@ export class GatewayService {
       }
     }
 
-    // Update device with all changes
-    await this.deviceModel.findByIdAndUpdate(deviceId, {
-      $set: updateData,
-    })
+    // Update device with all changes. Invalidation must be lifted with $unset:
+    // Mongoose 9 strips `$set: { field: undefined }`.
+    const heartbeatUpdate: any = { $set: updateData }
+    if (clearTokenInvalidation) {
+      heartbeatUpdate.$unset = {
+        fcmTokenInvalidatedAt: '',
+        fcmTokenInvalidReason: '',
+      }
+    }
+    await this.deviceModel.findByIdAndUpdate(deviceId, heartbeatUpdate)
 
     if (fcmTokenUpdated) {
       await this.detachFcmTokenFromOtherDevices(

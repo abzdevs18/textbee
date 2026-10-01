@@ -6,27 +6,31 @@ import androidx.work.*
 import com.google.gson.Gson
 import com.vernu.sms.ApiManager
 import com.vernu.sms.dtos.SMSDTO
-import com.vernu.sms.dtos.SMSForwardResponseDTO
 import com.vernu.sms.helpers.MessageSyncNotifier
-import java.io.IOException
+import com.vernu.sms.outbox.OutboxSync
 import java.util.concurrent.TimeUnit
 
+/**
+ * Delivers one SMS status report to the API, retrying through outages. A lost
+ * report leaves the server row "dispatched" and makes it re-send the SMS.
+ */
 class SMSStatusUpdateWorker(context: Context, workerParams: WorkerParameters) : Worker(context, workerParams) {
     companion object {
         private const val TAG = "SMSStatusUpdateWorker"
-        private const val MAX_RETRIES = 5
+        private const val MAX_RETRIES = 10
 
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_API_KEY = "api_key"
         const val KEY_SMS_DTO = "sms_dto"
-        const val KEY_RETRY_COUNT = "retry_count"
+
+        /** Responses that will never succeed on retry (bad key, unknown/foreign SMS, invalid body). */
+        private val PERMANENT_HTTP_CODES = setOf(400, 401, 403, 404, 409, 410, 422)
 
         fun enqueueWork(context: Context, deviceId: String, apiKey: String, smsDTO: SMSDTO) {
             val inputData = Data.Builder()
                 .putString(KEY_DEVICE_ID, deviceId)
                 .putString(KEY_API_KEY, apiKey)
                 .putString(KEY_SMS_DTO, Gson().toJson(smsDTO))
-                .putInt(KEY_RETRY_COUNT, 0)
                 .build()
 
             val constraints = Constraints.Builder()
@@ -35,16 +39,17 @@ class SMSStatusUpdateWorker(context: Context, workerParams: WorkerParameters) : 
 
             val workRequest = OneTimeWorkRequest.Builder(SMSStatusUpdateWorker::class.java)
                 .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
                 .setInputData(inputData)
                 .build()
 
-            val uniqueWorkName = "sms_status_${smsDTO.status}_${System.currentTimeMillis()}"
-            WorkManager.getInstance(context)
-                .beginUniqueWork(uniqueWorkName, ExistingWorkPolicy.REPLACE, workRequest)
-                .enqueue()
+            // One pending report per SMS, status and attempt: duplicates (re-reports
+            // for a re-sent command, repeated part callbacks) collapse into it.
+            val uniqueWorkName = "sms_status_${smsDTO.smsId}_${smsDTO.status}_${smsDTO.attempt ?: 0}"
+            WorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(uniqueWorkName, ExistingWorkPolicy.KEEP, workRequest)
 
-            Log.d(TAG, "Work enqueued for SMS status update - ID: ${smsDTO.smsId}")
+            Log.d(TAG, "Status report queued - ID: ${smsDTO.smsId}, Status: ${smsDTO.status}")
         }
     }
 
@@ -57,31 +62,42 @@ class SMSStatusUpdateWorker(context: Context, workerParams: WorkerParameters) : 
             return Result.failure()
         }
 
-        if (runAttemptCount >= MAX_RETRIES) {
-            Log.e(TAG, "Maximum retry count reached for SMS status update")
+        val smsDTO = try {
+            Gson().fromJson(smsDtoJson, SMSDTO::class.java)
+        } catch (e: Exception) {
+            Log.e(TAG, "Unreadable status report: ${e.message}")
             return Result.failure()
         }
 
-        val smsDTO = Gson().fromJson(smsDtoJson, SMSDTO::class.java)
-
         return try {
             val response = ApiManager.getApiService().updateSMSStatus(deviceId, apiKey, smsDTO).execute()
-            if (response.isSuccessful) {
-                Log.d(TAG, "SMS status updated successfully - ID: ${smsDTO.smsId}, Status: ${smsDTO.status}")
-                MessageSyncNotifier.notifyChanged(applicationContext)
-                // Device capacity freed — pull more from central outbox ASAP
-                val status = smsDTO.status?.uppercase() ?: ""
-                if (status == "SENT" || status == "DELIVERED" || status == "FAILED") {
-                    OutboxClaimWorker.enqueue(applicationContext)
+            when {
+                response.isSuccessful -> {
+                    Log.d(TAG, "SMS status updated - ID: ${smsDTO.smsId}, Status: ${smsDTO.status}")
+                    MessageSyncNotifier.notifyChanged(applicationContext)
+                    val status = smsDTO.status?.uppercase() ?: ""
+                    if (status == "SENT" || status == "DELIVERED" || status == "FAILED") {
+                        // Capacity freed on the server — pull more work right away.
+                        OutboxSync.claimAndDispatch(applicationContext, "status")
+                    }
+                    Result.success()
                 }
-                Result.success()
-            } else {
-                Log.e(TAG, "Failed to update SMS status. Response code: ${response.code()}")
-                Result.retry()
+                response.code() in PERMANENT_HTTP_CODES -> {
+                    Log.e(TAG, "Status report for ${smsDTO.smsId} rejected permanently: HTTP ${response.code()}")
+                    Result.failure()
+                }
+                runAttemptCount + 1 >= MAX_RETRIES -> {
+                    Log.e(TAG, "Giving up on status report for ${smsDTO.smsId}: HTTP ${response.code()}")
+                    Result.failure()
+                }
+                else -> {
+                    Log.w(TAG, "Status report failed: HTTP ${response.code()}; will retry")
+                    Result.retry()
+                }
             }
-        } catch (e: IOException) {
-            Log.e(TAG, "API call failed: ${e.message}")
-            Result.retry()
+        } catch (e: Exception) {
+            Log.w(TAG, "Status report call failed: ${e.message}")
+            if (runAttemptCount + 1 >= MAX_RETRIES) Result.failure() else Result.retry()
         }
     }
 }

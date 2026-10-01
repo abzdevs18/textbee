@@ -5,6 +5,8 @@ import android.content.Intent
 import android.util.Log
 import com.vernu.sms.AppConstants
 import com.vernu.sms.TextBeeUtils
+import com.vernu.sms.outbox.OutboxPollScheduler
+import com.vernu.sms.outbox.SmsDispatcher
 
 /**
  * Applies server-side gateway config to local prefs so web enable/disable
@@ -43,16 +45,16 @@ object GatewayConfigSync {
     private fun applySideEffects(context: Context, enabled: Boolean) {
         try {
             if (enabled) {
-                if (SharedPreferenceHelper.getSharedPreferenceBoolean(
-                        context, AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY, false
-                    )
-                ) {
-                    TextBeeUtils.startStickyNotificationService(context)
-                }
+                // Keep-alive service, outbox poll and dispatcher kick
+                GatewayReliability.ensureRunning(context, "gateway-enabled")
                 // Always keep heartbeat running while registered so remote config can sync
                 HeartbeatManager.scheduleHeartbeat(context)
             } else {
                 TextBeeUtils.stopStickyNotificationService(context)
+                OutboxPollScheduler.cancel(context)
+                // Queued SMS are refused (and reported) by the dispatcher so the
+                // server can hand them to another phone.
+                SmsDispatcher.kick(context)
                 // Keep heartbeat scheduled for config re-sync from web (enable/disable)
                 HeartbeatManager.scheduleHeartbeat(context)
             }

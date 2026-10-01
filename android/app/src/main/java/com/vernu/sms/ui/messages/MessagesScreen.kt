@@ -31,6 +31,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.core.content.ContextCompat
 import com.vernu.sms.dtos.SmsMessage
 import com.vernu.sms.helpers.MessageSyncNotifier
+import com.vernu.sms.outbox.OutboxEntry
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -50,7 +51,7 @@ fun MessagesScreen(
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == MessageSyncNotifier.ACTION_MESSAGES_CHANGED) {
-                    viewModel.refresh()
+                    viewModel.refreshSoon()
                 }
             }
         }
@@ -187,6 +188,7 @@ fun MessagesScreen(
                         items(state.messages) { message ->
                             MessageItem(
                                 message = message,
+                                status = statusViewFor(message, state.localStates),
                                 onClick = { selectedMessage = message }
                             )
                         }
@@ -218,12 +220,25 @@ fun MessagesScreen(
     }
 
     selectedMessage?.let { msg ->
-        MessageDetailDialog(message = msg, onDismiss = { selectedMessage = null })
+        MessageDetailDialog(
+            message = msg,
+            status = statusViewFor(msg, state.localStates),
+            onDismiss = { selectedMessage = null }
+        )
     }
 }
 
+private fun statusViewFor(message: SmsMessage, localStates: Map<String, OutboxEntry>): StatusView? {
+    if (message.isReceived || message.status == null) return null
+    val local = message.id?.let { localStates[it] }
+    return MessageStatusMapper.describe(
+        message.status, message.errorCode, message.errorMessage,
+        local?.state, local?.errorMessage
+    )
+}
+
 @Composable
-private fun MessageItem(message: SmsMessage, onClick: () -> Unit) {
+private fun MessageItem(message: SmsMessage, status: StatusView?, onClick: () -> Unit) {
     val accentColor = if (message.isReceived) Color(0xFF4CAF50)
                       else MaterialTheme.colorScheme.primary
 
@@ -284,9 +299,9 @@ private fun MessageItem(message: SmsMessage, onClick: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (!message.isReceived && message.status != null) {
+                if (status != null) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    StatusBadge(status = message.status)
+                    StatusBadge(status = status)
                 }
             }
         }
@@ -294,19 +309,21 @@ private fun MessageItem(message: SmsMessage, onClick: () -> Unit) {
 }
 
 @Composable
-private fun StatusBadge(status: String) {
-    val (color, label) = when (status.lowercase()) {
-        "delivered" -> MaterialTheme.colorScheme.tertiary to "Delivered"
-        "sent" -> MaterialTheme.colorScheme.primary to "Sent"
-        "failed" -> MaterialTheme.colorScheme.error to "Failed"
-        else -> MaterialTheme.colorScheme.onSurfaceVariant to "Pending"
+private fun StatusBadge(status: StatusView) {
+    val color = when (status.tone) {
+        StatusTone.DELIVERED -> MaterialTheme.colorScheme.tertiary
+        StatusTone.SENT -> MaterialTheme.colorScheme.primary
+        StatusTone.PROGRESS -> MaterialTheme.colorScheme.secondary
+        StatusTone.WARNING -> Color(0xFFB26A00)
+        StatusTone.ERROR -> MaterialTheme.colorScheme.error
+        StatusTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(
         color = color.copy(alpha = 0.15f),
         shape = MaterialTheme.shapes.extraSmall
     ) {
         Text(
-            text = label,
+            text = status.label,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
             color = color,
@@ -316,7 +333,7 @@ private fun StatusBadge(status: String) {
 }
 
 @Composable
-private fun MessageDetailDialog(message: SmsMessage, onDismiss: () -> Unit) {
+private fun MessageDetailDialog(message: SmsMessage, status: StatusView?, onDismiss: () -> Unit) {
     val accentColor = if (message.isReceived) Color(0xFF4CAF50)
                       else MaterialTheme.colorScheme.primary
 
@@ -346,8 +363,15 @@ private fun MessageDetailDialog(message: SmsMessage, onDismiss: () -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                     color = accentColor
                 )
-                if (!message.isReceived && message.status != null) {
-                    StatusBadge(status = message.status)
+                if (status != null) {
+                    StatusBadge(status = status)
+                    status.detail?.let { detail ->
+                        Text(
+                            text = detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 Divider()
                 Text(

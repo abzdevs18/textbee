@@ -233,10 +233,12 @@ describe('GatewayService', () => {
           enabled: true,
           user: mockUser,
           fcmTokenUpdatedAt: expect.any(Date),
-          fcmTokenInvalidatedAt: undefined,
-          fcmTokenInvalidReason: undefined,
         }),
       )
+      // Invalidation is lifted by updateDevice with $unset, never via the payload
+      const forwarded = (service.updateDevice as jest.Mock).mock.calls[0][1]
+      expect(forwarded).not.toHaveProperty('fcmTokenInvalidatedAt')
+      expect(forwarded).not.toHaveProperty('fcmTokenInvalidReason')
       expect(result).toBeDefined()
       
       // Restore the original method
@@ -257,8 +259,6 @@ describe('GatewayService', () => {
         ...mockDeviceInput,
         user: mockUser,
         fcmTokenUpdatedAt: expect.any(Date),
-        fcmTokenInvalidatedAt: undefined,
-        fcmTokenInvalidReason: undefined,
       })
       expect(result).toBeDefined()
     })
@@ -440,6 +440,65 @@ describe('GatewayService', () => {
       ).rejects.toThrow(HttpException)
       expect(mockDeviceModel.findById).toHaveBeenCalledWith(mockDeviceId)
       expect(mockDeviceModel.findByIdAndUpdate).not.toHaveBeenCalled()
+    })
+
+    it('should lift an FCM invalidation with $unset when the token rotates', async () => {
+      // Mongoose 9 strips `$set: { field: undefined }`, so only an explicit
+      // $unset can clear the flag that excludes a phone from dispatch/claims.
+      mockDeviceModel.findById.mockResolvedValue({
+        ...mockDevice,
+        fcmToken: 'oldToken',
+        fcmTokenInvalidatedAt: new Date(),
+        fcmTokenInvalidReason: 'FCM_TOKEN_NOT_REGISTERED',
+      })
+      mockDeviceModel.findByIdAndUpdate.mockResolvedValue({ ...mockDevice })
+
+      await service.updateDevice(mockDeviceId, { fcmToken: 'freshToken' })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$set).toEqual(
+        expect.objectContaining({
+          fcmToken: 'freshToken',
+          fcmTokenUpdatedAt: expect.any(Date),
+        }),
+      )
+      expect(update.$set).not.toHaveProperty('fcmTokenInvalidatedAt')
+      expect(update.$unset).toEqual({
+        fcmTokenInvalidatedAt: '',
+        fcmTokenInvalidReason: '',
+      })
+    })
+
+    it('should lift an FCM invalidation when the handset re-asserts the same token', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        ...mockDevice,
+        fcmTokenInvalidatedAt: new Date(),
+      })
+      mockDeviceModel.findByIdAndUpdate.mockResolvedValue({ ...mockDevice })
+
+      await service.updateDevice(mockDeviceId, {
+        fcmToken: mockDeviceInput.fcmToken,
+      })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toEqual({
+        fcmTokenInvalidatedAt: '',
+        fcmTokenInvalidReason: '',
+      })
+    })
+
+    it('should not let a client payload write invalidation bookkeeping', async () => {
+      mockDeviceModel.findById.mockResolvedValue(mockDevice)
+      mockDeviceModel.findByIdAndUpdate.mockResolvedValue({ ...mockDevice })
+
+      await service.updateDevice(mockDeviceId, {
+        name: 'Front desk',
+        fcmTokenInvalidatedAt: new Date(),
+      } as any)
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$set).not.toHaveProperty('fcmTokenInvalidatedAt')
+      expect(update.$unset).toBeUndefined()
     })
   })
 
@@ -1185,6 +1244,60 @@ describe('GatewayService', () => {
         expect.objectContaining({ outboxPending: 0, enabled: true }),
       )
     })
+
+    it('should lift an FCM invalidation when the handset re-asserts its token', async () => {
+      // Previously `$set: { fcmTokenInvalidatedAt: undefined }` was stripped by
+      // Mongoose, so a flagged phone stayed excluded no matter how often it
+      // heartbeated, rebooted or was force-stopped.
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+        fcmTokenInvalidatedAt: new Date(),
+        fcmTokenInvalidReason: 'FCM_TOKEN_NOT_REGISTERED',
+      })
+
+      await service.heartbeat(mockDeviceId, { fcmToken: 'token123' })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toEqual({
+        fcmTokenInvalidatedAt: '',
+        fcmTokenInvalidReason: '',
+      })
+      expect(update.$set).not.toHaveProperty('fcmTokenInvalidatedAt')
+    })
+
+    it('should store a rotated token and lift its invalidation', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+        fcmTokenInvalidatedAt: new Date(),
+      })
+
+      const result = await service.heartbeat(mockDeviceId, {
+        fcmToken: 'rotatedToken',
+      })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$set).toEqual(
+        expect.objectContaining({ fcmToken: 'rotatedToken' }),
+      )
+      expect(update.$unset).toEqual({
+        fcmTokenInvalidatedAt: '',
+        fcmTokenInvalidReason: '',
+      })
+      expect(result.fcmTokenUpdated).toBe(true)
+    })
+
+    it('should leave a healthy token alone', async () => {
+      await service.heartbeat(mockDeviceId, { fcmToken: 'token123' })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toBeUndefined()
+    })
   })
 
   describe('hard delete message history', () => {
@@ -1382,6 +1495,140 @@ describe('GatewayService', () => {
         mockSmsOutboxService.handleSendFailureAndFailover,
       ).not.toHaveBeenCalled()
       expect(result).toEqual(expect.objectContaining({ ignored: true }))
+    })
+
+    it('should not re-send when a late failure arrives after SENT', async () => {
+      // Older clients report every multipart part separately; a failed part
+      // after a sent part used to trigger failover and a duplicate SMS.
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'sent',
+        device: deviceId,
+        attemptCount: 1,
+        metadata: {},
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'FAILED',
+        errorCode: '1',
+      } as any)
+
+      expect(
+        mockSmsOutboxService.handleSendFailureAndFailover,
+      ).not.toHaveBeenCalled()
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
+    })
+
+    it('should fence a failure from a superseded attempt without excluding the owner', async () => {
+      // Single-phone setups: attempt 1 failed late while attempt 2 is already
+      // in flight on the same phone. Excluding the phone would leave nobody
+      // able to send the SMS.
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: deviceId,
+        attemptCount: 2,
+        metadata: { dispatchAttempts: [{ deviceId }, { deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'FAILED',
+        errorCode: '4',
+        attempt: 1,
+      } as any)
+
+      expect(
+        mockSmsOutboxService.handleSendFailureAndFailover,
+      ).not.toHaveBeenCalled()
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
+      const [, update] = (mockSmsModel.findByIdAndUpdate as jest.Mock).mock.calls[0]
+      expect(update.$addToSet).toBeUndefined()
+      expect(update.$set['metadata.staleDeviceFailure']).toEqual(
+        expect.objectContaining({ deviceId, attempt: 1 }),
+      )
+    })
+
+    it('should not re-run failover for an SMS already back in the outbox', async () => {
+      // The first FAILED requeued it (pending, backoff). Further FAILED reports
+      // for that attempt — one per multipart part from 2.8.19 phones — used to
+      // re-exclude the only phone and strand the SMS until the 2h cancel.
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'pending',
+        device: deviceId,
+        attemptCount: 1,
+        nextAttemptAt: new Date(Date.now() + 60_000),
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'FAILED',
+        errorCode: '1',
+      } as any)
+
+      expect(
+        mockSmsOutboxService.handleSendFailureAndFailover,
+      ).not.toHaveBeenCalled()
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
+    })
+
+    it('should fail over a failure from the current attempt', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: deviceId,
+        attemptCount: 2,
+        metadata: { dispatchAttempts: [{ deviceId }, { deviceId }] },
+      })
+      mockSmsOutboxService.handleSendFailureAndFailover.mockResolvedValue({
+        smsId: 'sms123',
+        status: 'pending',
+        reason: 'RETRY_SCHEDULED',
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'FAILED',
+        errorCode: '4',
+        attempt: 2,
+      } as any)
+
+      expect(
+        mockSmsOutboxService.handleSendFailureAndFailover,
+      ).toHaveBeenCalledWith('sms123', deviceId, '4', expect.any(String))
+      expect(result).toEqual(
+        expect.objectContaining({
+          failover: expect.objectContaining({ status: 'pending' }),
+        }),
+      )
+    })
+  })
+
+  describe('claimOutboxForDevice', () => {
+    it('should pass resync through and clamp the claim limit', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: 'device123',
+        enabled: true,
+      })
+
+      await service.claimOutboxForDevice('device123', 500, { resync: true })
+      await service.claimOutboxForDevice('device123', 'nope' as any)
+
+      expect(mockSmsOutboxService.claimForDevice).toHaveBeenNthCalledWith(
+        1,
+        'device123',
+        20,
+        { resync: true },
+      )
+      expect(mockSmsOutboxService.claimForDevice).toHaveBeenNthCalledWith(
+        2,
+        'device123',
+        5,
+        { resync: false },
+      )
     })
   })
 })

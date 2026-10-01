@@ -18,6 +18,11 @@ public class AppConstants {
     public static final String SHARED_PREFS_LAST_VERSION_CODE_KEY = "LAST_VERSION_CODE";
     public static final String SHARED_PREFS_LAST_VERSION_NAME_KEY = "LAST_VERSION_NAME";
     public static final String SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY = "STICKY_NOTIFICATION_ENABLED";
+    /**
+     * Keep-alive foreground service is on unless the user turns it off. Without
+     * it OEM battery managers kill the process and FCM commands never arrive.
+     */
+    public static final boolean DEFAULT_STICKY_NOTIFICATION_ENABLED = true;
     public static final String HEARTBEAT_WORK_TAG = "heartbeat";
     public static final String SHARED_PREFS_HEARTBEAT_ENABLED_KEY = "HEARTBEAT_ENABLED";
     public static final String SHARED_PREFS_HEARTBEAT_INTERVAL_MINUTES_KEY = "HEARTBEAT_INTERVAL_MINUTES";

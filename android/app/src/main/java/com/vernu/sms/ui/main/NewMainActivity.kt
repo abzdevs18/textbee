@@ -23,6 +23,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vernu.sms.AppConstants
 import com.vernu.sms.activities.MainActivity
+import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.ui.dashboard.DashboardScreen
@@ -69,6 +70,7 @@ class NewMainActivity : ComponentActivity() {
                             SharedPreferenceHelper.clearSharedPreference(this, key)
                         }
                         HeartbeatManager.cancelHeartbeat(this)
+                        GatewayReliability.stopAll(this)
                         startActivity(
                             Intent(this, OnboardingActivity::class.java).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

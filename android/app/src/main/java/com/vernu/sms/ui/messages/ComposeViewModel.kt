@@ -8,6 +8,7 @@ import com.vernu.sms.AppConstants
 import com.vernu.sms.dtos.SendSmsRequest
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.helpers.MessageSyncNotifier
+import com.vernu.sms.outbox.OutboxSync
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -87,6 +88,8 @@ class ComposeViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 if (response.isSuccessful) {
                     MessageSyncNotifier.notifyChanged(context)
+                    // Pick the new SMS up now instead of waiting for its push.
+                    OutboxSync.requestClaim(context, "compose")
                     _state.update { it.copy(isSending = false, sendSuccess = true) }
                 } else {
                     _state.update {

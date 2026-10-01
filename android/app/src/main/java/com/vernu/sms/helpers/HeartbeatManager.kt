@@ -11,6 +11,7 @@ object HeartbeatManager {
     private const val TAG = "HeartbeatManager"
     private const val MIN_INTERVAL_MINUTES = 15
     private const val UNIQUE_WORK_NAME = "heartbeat_unique_work"
+    private const val SCHEDULED_INTERVAL_KEY = "HEARTBEAT_SCHEDULED_INTERVAL_MINUTES"
 
     @JvmStatic
     fun scheduleHeartbeat(context: Context) {
@@ -37,13 +38,26 @@ object HeartbeatManager {
             .addTag(AppConstants.HEARTBEAT_WORK_TAG)
             .build()
 
+        // REPLACE re-runs a periodic job immediately. This is called after every
+        // successful heartbeat (config sync), so replacing an unchanged schedule
+        // would loop heartbeats back-to-back. Only replace when the interval changes.
+        val scheduledInterval = SharedPreferenceHelper.getSharedPreferenceInt(
+            appContext, SCHEDULED_INTERVAL_KEY, -1
+        )
+        val policy = if (scheduledInterval == intervalMinutes) {
+            ExistingPeriodicWorkPolicy.KEEP
+        } else {
+            ExistingPeriodicWorkPolicy.REPLACE
+        }
+
         WorkManager.getInstance(appContext)
             .enqueueUniquePeriodicWork(
                 UNIQUE_WORK_NAME,
-                ExistingPeriodicWorkPolicy.REPLACE,
+                policy,
                 heartbeatWork
             )
-        Log.d(TAG, "Heartbeat scheduled successfully with unique work name: $UNIQUE_WORK_NAME")
+        SharedPreferenceHelper.setSharedPreferenceInt(appContext, SCHEDULED_INTERVAL_KEY, intervalMinutes)
+        Log.d(TAG, "Heartbeat scheduled ($policy) with unique work name: $UNIQUE_WORK_NAME")
     }
 
     @JvmStatic
@@ -52,6 +66,7 @@ object HeartbeatManager {
         val appContext = context.applicationContext
         WorkManager.getInstance(appContext).cancelUniqueWork(UNIQUE_WORK_NAME)
         WorkManager.getInstance(appContext).cancelAllWorkByTag(AppConstants.HEARTBEAT_WORK_TAG)
+        SharedPreferenceHelper.clearSharedPreference(appContext, SCHEDULED_INTERVAL_KEY)
     }
 
     @JvmStatic

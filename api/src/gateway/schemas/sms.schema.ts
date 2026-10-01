@@ -83,6 +83,10 @@ export class SMS {
   @Prop({ type: [Types.ObjectId], default: [] })
   excludedDeviceIds: Types.ObjectId[]
 
+  /** Earliest time the outbox may hand this SMS to a device again (retry backoff). */
+  @Prop({ type: Date })
+  nextAttemptAt?: Date
+
   @Prop({ type: Date })
   dispatchedAt: Date
 

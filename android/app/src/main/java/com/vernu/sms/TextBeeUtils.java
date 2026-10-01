@@ -47,25 +47,33 @@ public class TextBeeUtils {
     }
 
     public static void startStickyNotificationService(Context context) {
-        if(!isPermissionGranted(context, Manifest.permission.RECEIVE_SMS)){
+        // The keep-alive service exists for sending as much as receiving.
+        if (!isPermissionGranted(context, Manifest.permission.SEND_SMS)
+                && !isPermissionGranted(context, Manifest.permission.RECEIVE_SMS)) {
             return;
         }
-        
-        // Only start service if user has enabled sticky notification
+
+        // On by default; the user can still switch it off in Settings.
         boolean stickyNotificationEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
                 context,
                 AppConstants.SHARED_PREFS_STICKY_NOTIFICATION_ENABLED_KEY,
-                false
+                AppConstants.DEFAULT_STICKY_NOTIFICATION_ENABLED
         );
-        
+
         if (stickyNotificationEnabled) {
             Intent notificationIntent = new Intent(context, StickyNotificationService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(notificationIntent);
-            } else {
-                context.startService(notificationIntent);
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(notificationIntent);
+                } else {
+                    context.startService(notificationIntent);
+                }
+                Log.i(TAG, "Starting sticky notification service");
+            } catch (Exception e) {
+                // Android 12+ refuses foreground-service starts from most
+                // background contexts; the next foreground/boot/FCM start retries.
+                Log.w(TAG, "Could not start sticky notification service: " + e.getMessage());
             }
-            Log.i(TAG, "Starting sticky notification service");
         } else {
             Log.i(TAG, "Sticky notification disabled by user, not starting service");
         }

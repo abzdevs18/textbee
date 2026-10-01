@@ -1,6 +1,7 @@
 package com.vernu.sms.ui.dashboard
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -37,6 +39,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vernu.sms.R
+import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.dtos.SimInfoDTO
 import com.vernu.sms.dtos.SubscriptionResponse
 import com.vernu.sms.dtos.UserProfile
@@ -86,6 +89,8 @@ fun DashboardScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 missingPermissions = checkMissingPermissions()
                 if (missingPermissions.isEmpty()) permissionsDenied = false
+                // Returning from the battery-optimization prompt or app settings
+                viewModel.refreshReliability()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -161,6 +166,29 @@ fun DashboardScreen(
                 onToggle = { viewModel.toggleGateway(it) },
                 onReceiveSmsToggle = { viewModel.setReceiveSms(it) }
             )
+            if (state.deviceId.isNotEmpty()) {
+                ReliabilityCard(
+                    state = state,
+                    onAllowBackground = {
+                        val opened = tryStartActivity(
+                            context, GatewayReliability.batteryOptimizationRequestIntent(context)
+                        ) || tryStartActivity(
+                            context, GatewayReliability.batteryOptimizationSettingsIntent()
+                        )
+                        if (!opened) {
+                            Toast.makeText(
+                                context,
+                                "Open Settings > Apps > Gabay SMS > Battery and allow background activity.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    },
+                    onOpenAppSettings = {
+                        tryStartActivity(context, GatewayReliability.appDetailsIntent(context))
+                    },
+                    onKeepAliveToggle = { viewModel.setKeepAlive(it) }
+                )
+            }
             SubscriptionCard(
                 subscription = state.subscription,
                 isLoading = state.isSubscriptionLoading,
@@ -336,6 +364,109 @@ private fun PermissionWarningCard(
                 )
             ) {
                 Text(if (showOpenSettings) "Open App Settings" else "Grant Permissions")
+            }
+        }
+    }
+}
+
+private fun tryStartActivity(context: Context, intent: Intent): Boolean = try {
+    context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    true
+} catch (e: Exception) {
+    false
+}
+
+/**
+ * What decides whether pushes from the server reach Android's SMS sender while
+ * the phone sits idle: battery optimization, the keep-alive service, and how
+ * many SMS this phone is still holding.
+ */
+@Composable
+private fun ReliabilityCard(
+    state: DashboardState,
+    onAllowBackground: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onKeepAliveToggle: (Boolean) -> Unit
+) {
+    val needsAttention = state.isGatewayEnabled &&
+        (state.isBatteryOptimized || !state.isKeepAliveEnabled)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (needsAttention) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (needsAttention) Icons.Default.Warning else Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = if (needsAttention) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Sending reliability",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = when (state.pendingOnPhone) {
+                    0 -> "No SMS waiting on this phone."
+                    1 -> "1 SMS is waiting on this phone to be sent."
+                    else -> "${state.pendingOnPhone} SMS are waiting on this phone to be sent."
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            if (state.isBatteryOptimized) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Battery optimization is on. Android may delay or drop SMS commands while the screen is off.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = onAllowBackground) {
+                    Text("Allow background activity")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = "Keep-alive notification",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Stops the phone from closing Gabay SMS in the background.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = state.isKeepAliveEnabled,
+                    onCheckedChange = onKeepAliveToggle
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "On Xiaomi, Oppo, Vivo, Realme, Huawei and Samsung phones, also turn on Autostart or \"Allow background activity\" for Gabay SMS in the app settings.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(onClick = onOpenAppSettings) {
+                Text("Open app settings")
             }
         }
     }

@@ -15,13 +15,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vernu.sms.BuildConfig
+import com.vernu.sms.helpers.GatewayReliability
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +53,21 @@ fun SettingsScreen(
             snackbarHostState.showSnackbar(it)
             viewModel.clearSnackbar()
         }
+    }
+
+    // Re-read after returning from the system battery-optimization prompt.
+    var batteryUnrestricted by remember {
+        mutableStateOf(GatewayReliability.isIgnoringBatteryOptimizations(context))
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryUnrestricted = GatewayReliability.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
@@ -189,10 +208,41 @@ fun SettingsScreen(
 
             SettingsSwitchRow(
                 icon = Icons.Default.NotificationsActive,
-                title = "Sticky Notification",
-                subtitle = "Keeps the gateway alive in the background",
+                title = "Keep-alive Notification",
+                subtitle = "Keeps the gateway alive in the background (recommended)",
                 checked = state.isStickyNotificationEnabled,
                 onCheckedChange = { viewModel.setStickyNotification(it) }
+            )
+
+            SettingsRow(
+                icon = Icons.Default.BatteryChargingFull,
+                title = "Battery Optimization",
+                subtitle = if (batteryUnrestricted) {
+                    "Not restricted — SMS commands arrive while the screen is off"
+                } else {
+                    "Restricted — tap to allow background activity"
+                },
+                onClick = {
+                    val opened = listOf(
+                        GatewayReliability.batteryOptimizationRequestIntent(context),
+                        GatewayReliability.batteryOptimizationSettingsIntent(),
+                        GatewayReliability.appDetailsIntent(context)
+                    ).any { intent ->
+                        try {
+                            context.startActivity(intent)
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                    if (!opened) {
+                        viewModel.showMessage("Open Settings > Apps > Gabay SMS > Battery")
+                    }
+                },
+                trailing = {
+                    Icon(Icons.Default.ChevronRight, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             )
 
             SettingsRow(

@@ -1,35 +1,23 @@
 package com.vernu.sms.services
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.media.RingtoneManager
-import android.os.Build
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
+import androidx.core.os.UserManagerCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.google.gson.Gson
 import com.vernu.sms.ApiManager
 import com.vernu.sms.AppConstants
-import com.vernu.sms.R
-import com.vernu.sms.activities.MainActivity
 import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO
 import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.HeartbeatHelper
 import com.vernu.sms.helpers.HeartbeatManager
-import com.vernu.sms.helpers.MessageSyncNotifier
+import com.vernu.sms.helpers.SMSHelper
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.models.SMSPayload
-import com.vernu.sms.helpers.SMSHelper
+import com.vernu.sms.outbox.OutboxSync
+import com.vernu.sms.outbox.SmsDispatcher
 import com.vernu.sms.workers.OutboxClaimWorker
-import com.vernu.sms.workers.SmsSendWorker
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -37,41 +25,45 @@ import retrofit2.Response
 class FCMService : FirebaseMessagingService() {
     companion object {
         private const val TAG = "FCMService"
-        private const val DEFAULT_NOTIFICATION_CHANNEL_ID = "N1"
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         Log.d(
             TAG,
-            "FCM data message received: id=${remoteMessage.messageId}, keys=${remoteMessage.data.keys}"
+            "FCM data message received: id=${remoteMessage.messageId}, priority=${remoteMessage.priority}/${remoteMessage.originalPriority}, keys=${remoteMessage.data.keys}"
         )
 
+        // Direct-boot delivery before the first unlock: prefs and the outbox
+        // are not readable yet. The server lease and the pull loop recover it.
+        if (!UserManagerCompat.isUserUnlocked(this)) {
+            Log.w(TAG, "Device locked since boot; deferring FCM command to the outbox pull")
+            return
+        }
+
         try {
-            val messageType = remoteMessage.data["type"]
-            if (messageType == "heartbeat_check") {
-                handleHeartbeatCheck()
-                return
-            }
-
-            // Web/API toggled gateway on/off — update local switch immediately
-            if (messageType == "device_config") {
-                val enabledRaw = remoteMessage.data["enabled"]
-                val enabled = enabledRaw.equals("true", ignoreCase = true) ||
-                        enabledRaw == "1"
-                Log.d(TAG, "Received device_config enabled=$enabled")
-                GatewayConfigSync.applyServerEnabled(this, enabled)
-                return
-            }
-
-            // Central outbox: free devices pull work when notified
-            if (messageType == "work_available") {
-                if (!GatewayConfigSync.isGatewayEnabled(this)) {
-                    Log.d(TAG, "Ignoring work_available — gateway disabled")
+            when (remoteMessage.data["type"]) {
+                "heartbeat_check" -> {
+                    handleHeartbeatCheck()
                     return
                 }
-                Log.d(TAG, "Received work_available — claiming outbox SMS")
-                OutboxClaimWorker.enqueue(this)
-                return
+                // Web/API toggled gateway on/off — update local switch immediately
+                "device_config" -> {
+                    val enabledRaw = remoteMessage.data["enabled"]
+                    val enabled = enabledRaw.equals("true", ignoreCase = true) || enabledRaw == "1"
+                    Log.d(TAG, "Received device_config enabled=$enabled")
+                    GatewayConfigSync.applyServerEnabled(this, enabled)
+                    return
+                }
+                // Central outbox: pull work now, inside this wake-up window
+                "work_available" -> {
+                    if (!GatewayConfigSync.isGatewayEnabled(this)) {
+                        Log.d(TAG, "Ignoring work_available — gateway disabled")
+                        return
+                    }
+                    // Falls back to OutboxClaimWorker by itself if the pull fails.
+                    OutboxSync.claimAndDispatch(this, "push")
+                    return
+                }
             }
 
             val smsDataJson = remoteMessage.data["smsData"]
@@ -80,7 +72,7 @@ class FCMService : FirebaseMessagingService() {
                 return
             }
 
-            val smsPayload = Gson().fromJson(smsDataJson, SMSPayload::class.java)
+            val smsPayload = Gson().fromJson(smsDataJson, SMSPayload::class.java) ?: return
             val targetDeviceId = remoteMessage.data["targetDeviceId"]
                 ?: remoteMessage.data["deviceId"]
                 ?: smsPayload.targetDeviceId
@@ -95,29 +87,27 @@ class FCMService : FirebaseMessagingService() {
                 Log.w(TAG, "Refusing SMS command — gateway disabled on this device")
                 val id = smsPayload.smsId
                 if (!id.isNullOrBlank()) {
-                    SMSHelper.reportGatewayDisabled(this, id, smsPayload.smsBatchId ?: "")
+                    SMSHelper.reportGatewayDisabled(this, id, smsPayload.smsBatchId ?: "", smsPayload.attempt)
                 }
                 return
             }
 
-            // Never send expired SMS (2h hard cancel policy)
-            if (isPayloadExpired(smsPayload.expiresAt)) {
-                Log.w(TAG, "Ignoring expired SMS command ${smsPayload.smsId}")
-                val id = smsPayload.smsId
-                val batch = smsPayload.smsBatchId ?: ""
-                if (!id.isNullOrBlank()) {
-                    SMSHelper.reportExpired(this, id, batch)
-                }
-                return
-            }
-
-            Log.d(
-                TAG,
-                "Parsed SMS command: id=${smsPayload.smsId}, recipients=${smsPayload.recipients?.size ?: 0}"
-            )
-            sendSMS(smsPayload)
+            // Persist first, then hand due SMS to the radio right here: no
+            // deferred job sits between the push and Android's SMS stack.
+            SmsDispatcher.accept(this, smsPayload, "push")
+            SmsDispatcher.pump(this)
         } catch (e: Exception) {
             Log.e(TAG, "Error processing FCM message: ${e.message}", e)
+            // Whatever we could not process is still leased to us on the server.
+            OutboxClaimWorker.enqueue(this)
+        }
+    }
+
+    /** FCM dropped queued messages for this app (too many or expired): resync from the server. */
+    override fun onDeletedMessages() {
+        Log.w(TAG, "FCM deleted pending messages; resyncing outbox")
+        if (UserManagerCompat.isUserUnlocked(this)) {
+            OutboxSync.requestClaim(this, "fcm-deleted")
         }
     }
 
@@ -170,38 +160,12 @@ class FCMService : FirebaseMessagingService() {
         return true
     }
 
-    private fun sendSMS(smsPayload: SMSPayload?) {
-        if (smsPayload == null) {
-            Log.e(TAG, "SMS payload is null")
-            return
-        }
-
-        val recipients = smsPayload.recipients
-        if (recipients == null || recipients.isEmpty()) {
-            Log.e(TAG, "No recipients found in SMS payload")
-            return
-        }
-
-        for (recipient in recipients) {
-            SmsSendWorker.enqueue(
-                this, recipient, smsPayload.message ?: "",
-                smsPayload.smsId, smsPayload.smsBatchId, smsPayload.simSubscriptionId,
-                smsPayload.expiresAt
-            )
-        }
-
-        Log.d(
-            TAG,
-            "Enqueued ${recipients.size} SMS command(s): batch=${smsPayload.smsBatchId}"
-        )
-        MessageSyncNotifier.notifyChanged(this)
-    }
-
     override fun onNewToken(token: String) {
         sendRegistrationToServer(token)
     }
 
     private fun sendRegistrationToServer(token: String) {
+        if (!UserManagerCompat.isUserUnlocked(this)) return
         val deviceId = SharedPreferenceHelper.getSharedPreferenceString(
             this, AppConstants.SHARED_PREFS_DEVICE_ID_KEY, ""
         ) ?: ""
@@ -235,66 +199,5 @@ class FCMService : FirebaseMessagingService() {
                     Log.e(TAG, "Error updating FCM token: ${t.message}")
                 }
             })
-    }
-
-    private fun isPayloadExpired(expiresAt: String?): Boolean {
-        if (expiresAt.isNullOrBlank()) return false
-        return try {
-            val patterns = arrayOf(
-                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-                "yyyy-MM-dd'T'HH:mm:ss'Z'",
-                "yyyy-MM-dd'T'HH:mm:ss.SSSX",
-                "yyyy-MM-dd'T'HH:mm:ssX"
-            )
-            for (pattern in patterns) {
-                try {
-                    val sdf = java.text.SimpleDateFormat(pattern, java.util.Locale.US)
-                    sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    val date = sdf.parse(expiresAt) ?: continue
-                    return System.currentTimeMillis() > date.time
-                } catch (_: Exception) {
-                }
-            }
-            false
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun sendNotification(title: String, messageBody: String) {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent, PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        val notificationBuilder = NotificationCompat.Builder(this, DEFAULT_NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle(title)
-            .setContentText(messageBody)
-            .setAutoCancel(true)
-            .setSound(defaultSoundUri)
-            .setContentIntent(pendingIntent)
-
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(
-                    DEFAULT_NOTIFICATION_CHANNEL_ID,
-                    "Channel human readable title",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                )
-            )
-        }
-
-        if (
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationManager.notify(0, notificationBuilder.build())
-        }
     }
 }

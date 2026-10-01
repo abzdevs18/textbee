@@ -279,11 +279,14 @@ export class GatewayController {
   @Post('/devices/:id/claim-outbox')
   async claimOutbox(
     @Param('id') deviceId: string,
-    @Body() body: { limit?: number },
+    @Body() body: { limit?: number; resync?: boolean },
   ) {
     const data = await this.gatewayService.claimOutboxForDevice(
       deviceId,
       body?.limit ?? 5,
+      // Clients that dedupe commands by smsId+attempt (Android 2.8.20+) ask
+      // for their still-leased work back in case its FCM push never arrived.
+      { resync: body?.resync === true },
     )
     return { data }
   }

@@ -379,6 +379,14 @@ export class UpdateSMSStatusDTO {
     description: 'Error message if the message failed',
   })
   errorMessage?: string
+
+  @ApiProperty({
+    type: Number,
+    required: false,
+    description:
+      'Dispatch attempt the report belongs to (from the command payload). Failures from superseded attempts are recorded but do not trigger failover.',
+  })
+  attempt?: number
 }
 
 export class HeartbeatInputDTO {

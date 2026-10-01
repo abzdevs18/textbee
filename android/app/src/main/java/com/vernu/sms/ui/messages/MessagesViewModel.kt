@@ -7,14 +7,22 @@ import com.vernu.sms.ApiManagerKt
 import com.vernu.sms.AppConstants
 import com.vernu.sms.dtos.SmsMessage
 import com.vernu.sms.helpers.SharedPreferenceHelper
+import com.vernu.sms.outbox.OutboxEntry
+import com.vernu.sms.outbox.OutboxStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class MessagesState(
     val messages: List<SmsMessage> = emptyList(),
+    /** This phone's own view of each SMS (queued / sending / sent), keyed by server SMS id. */
+    val localStates: Map<String, OutboxEntry> = emptyMap(),
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
     val error: String? = null,
@@ -25,6 +33,9 @@ data class MessagesState(
 )
 
 class MessagesViewModel(app: Application) : AndroidViewModel(app) {
+    companion object {
+        private const val REFRESH_DEBOUNCE_MS = 1500L
+    }
 
     private val context get() = getApplication<Application>().applicationContext
 
@@ -41,6 +52,20 @@ class MessagesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() = fetchMessages(reset = true)
+
+    private var pendingRefresh: Job? = null
+
+    /**
+     * Coalesces bursts of outbox change broadcasts (accept, submit, sent,
+     * delivered for every SMS) into one reload.
+     */
+    fun refreshSoon() {
+        pendingRefresh?.cancel()
+        pendingRefresh = viewModelScope.launch {
+            delay(REFRESH_DEBOUNCE_MS)
+            fetchMessages(reset = true)
+        }
+    }
 
     fun loadMore() {
         val s = _state.value
@@ -77,9 +102,12 @@ class MessagesViewModel(app: Application) : AndroidViewModel(app) {
                     val body = response.body()
                     val newMessages = body?.data ?: emptyList()
                     val meta = body?.meta
+                    val combined = if (reset) newMessages else _state.value.messages + newMessages
+                    val localStates = loadLocalStates(combined)
                     _state.update {
                         it.copy(
-                            messages = if (reset) newMessages else it.messages + newMessages,
+                            messages = combined,
+                            localStates = localStates,
                             isLoading = false,
                             isLoadingMore = false,
                             error = null,
@@ -97,6 +125,18 @@ class MessagesViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update {
                     it.copy(isLoading = false, isLoadingMore = false, error = "Network error")
                 }
+            }
+        }
+    }
+
+    private suspend fun loadLocalStates(messages: List<SmsMessage>): Map<String, OutboxEntry> {
+        val ids = messages.filter { !it.isReceived }.mapNotNull { it.id }
+        if (ids.isEmpty()) return emptyMap()
+        return withContext(Dispatchers.IO) {
+            try {
+                OutboxStore.get(context).snapshotsFor(ids)
+            } catch (e: Exception) {
+                emptyMap()
             }
         }
     }

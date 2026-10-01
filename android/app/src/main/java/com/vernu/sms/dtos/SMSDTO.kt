@@ -13,4 +13,7 @@ class SMSDTO {
     var failedAtInMillis: Long = 0
     var errorCode: String? = null
     var errorMessage: String? = null
+
+    /** Server dispatch attempt this report belongs to (lets the API ignore superseded failures). */
+    var attempt: Int? = null
 }
