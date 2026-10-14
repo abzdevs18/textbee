@@ -15,7 +15,9 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.vernu.sms.BuildConfig
 import com.vernu.sms.R
+import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.outbox.SmsDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -36,6 +38,10 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         /** Waits up to this long are sat out past the run budget (still well under the ~10 min job limit). */
         private const val SHORT_WAIT_MS = 30_000L
+
+        /** The longest configurable send delay (3600 s). */
+        private const val MAX_INITIAL_DELAY_MS = 60 * 60 * 1000L
+        private const val PREF_RESET_VERSION = "SMS_DISPATCH_WORK_RESET_VERSION"
         private const val NOTIFICATION_ID = 7302
         private const val CHANNEL_ID = "sms_dispatch"
 
@@ -58,13 +64,36 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
             val builder = OneTimeWorkRequest.Builder(SmsDispatchWorker::class.java)
             if (initialDelayMs > 0) {
                 // Expedited work cannot be delayed; long send delays use a normal job.
-                builder.setInitialDelay(initialDelayMs, TimeUnit.MILLISECONDS)
+                // Never longer than the largest send delay: a parked run blocks every later kick.
+                builder.setInitialDelay(initialDelayMs.coerceAtMost(MAX_INITIAL_DELAY_MS), TimeUnit.MILLISECONDS)
             } else {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
             workManager.enqueueUniqueWork(
                 UNIQUE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, builder.build()
             )
+        }
+
+        /**
+         * Once per app update: cancel dispatch runs an older version scheduled
+         * (2.8.21 could schedule one ~292 million years away, and a waiting run
+         * makes [enqueue] skip every later kick), then start a fresh one.
+         */
+        @JvmStatic
+        fun resetAfterUpdate(context: Context) {
+            val app = context.applicationContext
+            val version = BuildConfig.VERSION_CODE
+            if (SharedPreferenceHelper.getSharedPreferenceInt(app, PREF_RESET_VERSION, 0) >= version) return
+            SmsDispatcher.runInBackground {
+                try {
+                    WorkManager.getInstance(app).cancelUniqueWork(UNIQUE_WORK).result.get(5, TimeUnit.SECONDS)
+                    Log.i(TAG, "Cleared dispatch runs scheduled by an older version")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not clear old dispatch runs: ${e.message}")
+                }
+                SharedPreferenceHelper.setSharedPreferenceInt(app, PREF_RESET_VERSION, version)
+                SmsDispatcher.kick(app)
+            }
         }
 
         /** Notification for expedited work on Android 11 and older (runs as a foreground service there). */

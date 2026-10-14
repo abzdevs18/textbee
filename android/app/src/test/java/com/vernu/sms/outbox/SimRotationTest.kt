@@ -11,6 +11,9 @@ class SimRotationTest {
     private val sim2 = 22
     private val both = listOf(sim1, sim2)
 
+    /** A real epoch time: a clock starting at 0 hid an overflow that froze the first send. */
+    private val t0 = 1_760_500_000_000L
+
     /** Starts a send at [at] and confirms it [confirmAfterMs] later. */
     private fun sendAndConfirm(
         state: SimRotationState,
@@ -26,10 +29,29 @@ class SimRotationTest {
     }
 
     @Test
+    fun firstEverSendGoesOutImmediately() {
+        // Regression: no confirmation history made the wait overflow to ~292 million years.
+        assertEquals(SimDecision.Send(sim1), SimRotationPolicy.decide(SimRotationState(), both, t0))
+        assertEquals(SimDecision.Send(sim1), SimRotationPolicy.decide(SimRotationState(), listOf(sim1), t0))
+        assertEquals(
+            SimDecision.Send(SimRotationPolicy.DEFAULT_SIM),
+            SimRotationPolicy.decide(SimRotationState(), listOf(SimRotationPolicy.DEFAULT_SIM), t0)
+        )
+    }
+
+    @Test
+    fun aSimWithNoHistoryOnlyWaitsForTheDeviceGap() {
+        // sim2 has never sent; only the 10s phone gap since sim1's confirmation applies.
+        val state = SimRotationState(lastSim = sim1, lastConfirmAnyMs = t0, lastConfirmBySim = mapOf(sim1 to t0))
+        assertEquals(SimDecision.Wait(4_000), SimRotationPolicy.decide(state, both, t0 + 6_000))
+        assertEquals(SimDecision.Send(sim2), SimRotationPolicy.decide(state, both, t0 + 10_000))
+    }
+
+    @Test
     fun alternatesSimsTenSecondsApartAndTwentyPerSim() {
         var state = SimRotationState()
         val order = mutableListOf<Int>()
-        for (at in listOf(0L, 10_000L, 20_000L, 30_000L)) {
+        for (at in listOf(t0, t0 + 10_000L, t0 + 20_000L, t0 + 30_000L)) {
             val (next, sim) = sendAndConfirm(state, both, at)
             order += sim
             state = next
@@ -39,65 +61,77 @@ class SimRotationTest {
 
     @Test
     fun nextSendWaitsTenSecondsAfterConfirmationNotAfterHandOff() {
-        // Handed to the radio at 0, confirmed by the network at 4s.
-        val (state, _) = sendAndConfirm(SimRotationState(), both, 0, confirmAfterMs = 4_000)
-        assertEquals(SimDecision.Wait(4_000), SimRotationPolicy.decide(state, both, 10_000))
-        assertEquals(SimDecision.Send(sim2), SimRotationPolicy.decide(state, both, 14_000))
+        // Handed to the radio at t0, confirmed by the network 4s later.
+        val (state, _) = sendAndConfirm(SimRotationState(), both, t0, confirmAfterMs = 4_000)
+        assertEquals(SimDecision.Wait(4_000), SimRotationPolicy.decide(state, both, t0 + 10_000))
+        assertEquals(SimDecision.Send(sim2), SimRotationPolicy.decide(state, both, t0 + 14_000))
     }
 
     @Test
     fun waitsForConfirmationWhileASendIsInFlight() {
-        val started = SimRotationPolicy.started(SimRotationState(), SimInFlight("a#1", sim1, 0))
-        val decision = SimRotationPolicy.decide(started, both, 30_000)
+        val started = SimRotationPolicy.started(SimRotationState(), SimInFlight("a#1", sim1, t0))
+        val decision = SimRotationPolicy.decide(started, both, t0 + 30_000)
         assertTrue(decision is SimDecision.Wait)
-        assertTrue((decision as SimDecision.Wait).delayMs <= SimRotationPolicy.CONFIRM_POLL_MS)
+        assertTrue((decision as SimDecision.Wait).delayMs in 1..SimRotationPolicy.CONFIRM_POLL_MS)
     }
 
     @Test
     fun unconfirmedSendTimesOutAfterSixtySeconds() {
-        val flight = SimInFlight("a#1", sim1, 0)
+        val flight = SimInFlight("a#1", sim1, t0)
         val started = SimRotationPolicy.started(SimRotationState(), flight)
-        assertTrue(SimRotationPolicy.decide(started, both, 59_999) is SimDecision.Wait)
-        assertEquals(SimDecision.TimedOut(flight), SimRotationPolicy.decide(started, both, 60_000))
+        assertTrue(SimRotationPolicy.decide(started, both, t0 + 59_999) is SimDecision.Wait)
+        assertEquals(SimDecision.TimedOut(flight), SimRotationPolicy.decide(started, both, t0 + 60_000))
     }
 
     @Test
     fun clockJumpingBackwardsDoesNotStallTheInFlightWait() {
-        val flight = SimInFlight("a#1", sim1, 100_000)
+        val flight = SimInFlight("a#1", sim1, t0 + 100_000)
         val started = SimRotationPolicy.started(SimRotationState(), flight)
-        assertEquals(SimDecision.TimedOut(flight), SimRotationPolicy.decide(started, both, 50_000))
+        assertEquals(SimDecision.TimedOut(flight), SimRotationPolicy.decide(started, both, t0 + 50_000))
     }
 
     @Test
     fun singleUsableSimKeepsTheTwentySecondGap() {
         val only = listOf(sim1)
-        val (state, sim) = sendAndConfirm(SimRotationState(), only, 0)
+        val (state, sim) = sendAndConfirm(SimRotationState(), only, t0)
         assertEquals(sim1, sim)
-        assertEquals(SimDecision.Wait(10_000), SimRotationPolicy.decide(state, only, 10_000))
-        assertEquals(SimDecision.Send(sim1), SimRotationPolicy.decide(state, only, 20_000))
+        assertEquals(SimDecision.Wait(10_000), SimRotationPolicy.decide(state, only, t0 + 10_000))
+        assertEquals(SimDecision.Send(sim1), SimRotationPolicy.decide(state, only, t0 + 20_000))
     }
 
     @Test
     fun pausedSimDropsOutAndTheOtherKeepsTwentySecondGap() {
         var state = SimRotationState()
-        state = sendAndConfirm(state, both, 0).first // sim1
-        state = sendAndConfirm(state, both, 10_000).first // sim2
+        state = sendAndConfirm(state, both, t0).first // sim1
+        state = sendAndConfirm(state, both, t0 + 10_000).first // sim2
         // sim1 is now paused: only sim2 remains, 20s after its own confirmation.
         val onlySim2 = listOf(sim2)
-        assertEquals(SimDecision.Wait(10_000), SimRotationPolicy.decide(state, onlySim2, 20_000))
-        assertEquals(SimDecision.Send(sim2), SimRotationPolicy.decide(state, onlySim2, 30_000))
+        assertEquals(SimDecision.Wait(10_000), SimRotationPolicy.decide(state, onlySim2, t0 + 20_000))
+        assertEquals(SimDecision.Send(sim2), SimRotationPolicy.decide(state, onlySim2, t0 + 30_000))
     }
 
     @Test
     fun noUsableSimWhenAllArePaused() {
-        assertEquals(SimDecision.NoUsableSim, SimRotationPolicy.decide(SimRotationState(), emptyList(), 0))
+        assertEquals(SimDecision.NoUsableSim, SimRotationPolicy.decide(SimRotationState(), emptyList(), t0))
     }
 
     @Test
-    fun wallClockJumpForwardInStateNeverParksTheQueueBeyondOneSimGap() {
-        val state = SimRotationState(lastSim = sim2, lastConfirmAnyMs = 10_000_000, lastConfirmBySim = mapOf(sim1 to 10_000_000))
-        val decision = SimRotationPolicy.decide(state, both, 0)
-        assertEquals(SimDecision.Wait(SimRotationPolicy.SIM_GAP_MS), decision)
+    fun confirmationStampedInTheFutureIsIgnoredInsteadOfParkingTheQueue() {
+        // The phone clock moved back an hour after the last confirmation.
+        val later = t0 + 60 * 60_000L
+        val state = SimRotationState(lastSim = sim2, lastConfirmAnyMs = later, lastConfirmBySim = mapOf(sim1 to later))
+        assertEquals(SimDecision.Send(sim1), SimRotationPolicy.decide(state, both, t0))
+    }
+
+    @Test
+    fun everyWaitIsBoundedByOneSimGap() {
+        val state = SimRotationState(lastSim = sim2, lastConfirmAnyMs = t0, lastConfirmBySim = mapOf(sim1 to t0))
+        listOf(t0, t0 + 1, t0 + 19_999, t0 + 20_000, t0 + 3_600_000).forEach { now ->
+            val decision = SimRotationPolicy.decide(state, both, now)
+            if (decision is SimDecision.Wait) {
+                assertTrue("wait ${decision.delayMs} at $now", decision.delayMs in 1..SimRotationPolicy.SIM_GAP_MS)
+            }
+        }
     }
 
     @Test

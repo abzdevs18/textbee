@@ -180,7 +180,10 @@ object SmsDispatcher {
                     SimRotationPolicy.timeoutOutcome(store.get(localId), sendSeq)
                 }
                 when (decision) {
-                    is SimDecision.Wait -> return DispatchOutcome.Wait(decision.delayMs)
+                    // Rotation waits are never longer than one confirmation timeout; a bad value must not park the queue.
+                    is SimDecision.Wait -> return DispatchOutcome.Wait(
+                        decision.delayMs.coerceIn(1, SimRotationPolicy.CONFIRM_TIMEOUT_MS)
+                    )
                     is SimDecision.Send -> submitOnSim(app, store, entry, decision.sim, now)
                     SimDecision.NoUsableSim -> {
                         // Retryable for the server: it moves the SMS to another phone.

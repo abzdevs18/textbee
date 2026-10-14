@@ -122,11 +122,13 @@ object SimRotationPolicy {
         return if (index < 0) usable[0] else usable[(index + 1) % usable.size]
     }
 
-    /** Earliest time [sim] may send; clamped so a wall-clock jump never parks the queue for long. */
+    /** Earliest time [sim] may send; [nowMs] when nothing has been confirmed yet. */
     fun readyAt(state: SimRotationState, sim: Int, nowMs: Long): Long {
-        val afterDevice = state.lastConfirmAnyMs?.plus(DEVICE_GAP_MS) ?: Long.MIN_VALUE
-        val afterSim = state.lastConfirmBySim[sim]?.plus(SIM_GAP_MS) ?: Long.MIN_VALUE
-        return maxOf(afterDevice, afterSim).coerceAtMost(nowMs + SIM_GAP_MS)
+        val afterDevice = state.lastConfirmAnyMs?.plus(DEVICE_GAP_MS)
+        val afterSim = state.lastConfirmBySim[sim]?.plus(SIM_GAP_MS)
+        val ready = listOfNotNull(afterDevice, afterSim).maxOrNull() ?: return nowMs
+        // Further out than one SIM gap means the clock moved backwards: never park the queue on it.
+        return if (ready > nowMs + SIM_GAP_MS) nowMs else ready
     }
 
     fun decide(state: SimRotationState, usable: List<Int>, nowMs: Long): SimDecision {
