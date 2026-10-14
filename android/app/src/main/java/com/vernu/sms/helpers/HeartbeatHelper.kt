@@ -16,6 +16,7 @@ import com.vernu.sms.TextBeeUtils
 import com.vernu.sms.dtos.HeartbeatInputDTO
 import com.vernu.sms.dtos.SimInfoCollectionDTO
 import com.vernu.sms.outbox.OutboxSync
+import com.vernu.sms.outbox.SimRotationManager
 import com.vernu.sms.workers.OutboxClaimWorker
 import java.io.IOException
 import java.util.Locale
@@ -104,10 +105,15 @@ object HeartbeatHelper {
             heartbeatInput.receiveSMSEnabled = SharedPreferenceHelper.getSharedPreferenceBoolean(
                 context, AppConstants.SHARED_PREFS_RECEIVE_SMS_ENABLED_KEY, false
             )
-            heartbeatInput.smsSendDelaySeconds = SharedPreferenceHelper.getSharedPreferenceInt(
-                context, AppConstants.SHARED_PREFS_SMS_SEND_DELAY_SECONDS_KEY,
-                AppConstants.DEFAULT_SMS_SEND_DELAY_SECONDS
-            )
+            // The server sizes this phone's lease and in-flight cap from the real pace.
+            heartbeatInput.smsSendDelaySeconds = if (SimRotationManager.isEnabled(context)) {
+                SimRotationManager.effectiveSendDelaySeconds(context)
+            } else {
+                SharedPreferenceHelper.getSharedPreferenceInt(
+                    context, AppConstants.SHARED_PREFS_SMS_SEND_DELAY_SECONDS_KEY,
+                    AppConstants.DEFAULT_SMS_SEND_DELAY_SECONDS
+                )
+            }
 
             // SIM info
             heartbeatInput.simInfo = SimInfoCollectionDTO().apply {

@@ -10,7 +10,6 @@ import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.MessageSyncNotifier
 import com.vernu.sms.helpers.SMSHelper
 import com.vernu.sms.helpers.SharedPreferenceHelper
-import com.vernu.sms.helpers.SimFailoverManager
 import com.vernu.sms.models.SMSPayload
 import com.vernu.sms.workers.SmsDispatchWorker
 import java.util.concurrent.ExecutorService
@@ -45,7 +44,7 @@ object SmsDispatcher {
         /** Another thread is dispatching right now. */
         object Busy : DispatchOutcome()
 
-        /** The next SMS is due after the configured send delay. */
+        /** The next SMS is due later (send delay, SIM gap, or waiting for a network confirmation). */
         data class Wait(val delayMs: Long) : DispatchOutcome()
     }
 
@@ -170,10 +169,31 @@ object SmsDispatcher {
                     continue
                 }
 
-                val waitMs = pacingWaitMs(app, now)
-                if (waitMs > 0) return DispatchOutcome.Wait(waitMs)
+                if (!SimRotationManager.isEnabled(app)) {
+                    val waitMs = pacingWaitMs(app, now)
+                    if (waitMs > 0) return DispatchOutcome.Wait(waitMs)
+                    submit(app, store, entry, now)
+                    continue
+                }
 
-                submit(app, store, entry, now)
+                val decision = SimRotationManager.decide(app, now) { localId, sendSeq ->
+                    SimRotationPolicy.timeoutOutcome(store.get(localId), sendSeq)
+                }
+                when (decision) {
+                    is SimDecision.Wait -> return DispatchOutcome.Wait(decision.delayMs)
+                    is SimDecision.Send -> submitOnSim(app, store, entry, decision.sim, now)
+                    SimDecision.NoUsableSim -> {
+                        // Retryable for the server: it moves the SMS to another phone.
+                        store.finish(
+                            entry.localId, LocalState.FAILED, StatusReporter.ERROR_ALL_SIMS_PAUSED,
+                            "Every SIM on this phone is paused after ${SimRotationPolicy.FAILURE_LIMIT} failed SMS in a row. " +
+                                "Reload the SIMs, then restart the Gabay SMS app.",
+                            now
+                        )?.let { StatusReporter.reportFinal(app, it) }
+                        MessageSyncNotifier.notifyChanged(app)
+                    }
+                    is SimDecision.TimedOut -> Unit // resolved inside decide()
+                }
             }
         } finally {
             dispatchLock.unlock()
@@ -243,51 +263,86 @@ object SmsDispatcher {
         return null
     }
 
+    /** Rotation off: the server's SIM, else the preferred SIM, else the phone default. */
     private fun submit(context: Context, store: OutboxStore, entry: OutboxEntry, now: Long) {
-        val requestedSim = resolveRequestedSim(context, entry.simSubscriptionId)
-        val resolvedSim = SimFailoverManager.resolveSendSim(context, requestedSim, entry.batchId)
+        val sim = resolveRequestedSim(context, entry.simSubscriptionId)
 
         val prepared = try {
-            val manager = SMSHelper.smsManagerFor(context, resolvedSim)
+            val manager = SMSHelper.smsManagerFor(context, sim)
             manager to SMSHelper.divide(manager, entry.message)
         } catch (e: Exception) {
-            failSubmission(context, store, entry, e, requestedSim, resolvedSim, now)
+            failSubmission(context, store, entry, e, now)
             return
         }
         val (manager, parts) = prepared
 
-        val sendSeq = store.markSubmitted(entry.localId, parts.size, requestedSim, resolvedSim, now)
+        val sendSeq = store.markSubmitted(entry.localId, parts.size, sim, sim, now)
             ?: return // claimed by another path meanwhile
         markSubmittedNow(context, now)
 
         try {
-            SMSHelper.submit(context, manager, entry, parts, sendSeq, requestedSim, resolvedSim)
+            SMSHelper.submit(context, manager, entry, parts, sendSeq, sim, sim)
             Log.d(TAG, "Handed SMS ${entry.localId} to the radio (${parts.size} part(s), attempt ${entry.attempt})")
         } catch (e: Exception) {
-            failSubmission(context, store, entry, e, requestedSim, resolvedSim, now)
+            failSubmission(context, store, entry, e, now)
             return
         }
         MessageSyncNotifier.notifyChanged(context)
     }
 
+    /** Rotation on: send on the SIM the rotation picked; the server's SIM choice is not used. */
+    private fun submitOnSim(context: Context, store: OutboxStore, entry: OutboxEntry, sim: Int, now: Long) {
+        val subscriptionId = SimRotationManager.subscriptionIdFor(sim)
+        val requestedSim = entry.simSubscriptionId?.takeIf { it >= 0 }
+        if (requestedSim != null && requestedSim != subscriptionId) {
+            Log.d(TAG, "SIM rotation sends ${entry.localId} on SIM $sim instead of requested SIM $requestedSim")
+        }
+
+        val prepared = try {
+            val manager = SMSHelper.smsManagerFor(context, subscriptionId)
+            manager to SMSHelper.divide(manager, entry.message)
+        } catch (e: Exception) {
+            val code = failSubmission(context, store, entry, e, now)
+            SimRotationManager.onFailedBeforeStart(
+                context, sim, SimRotationPolicy.outcomeOfError(code), System.currentTimeMillis()
+            )
+            return
+        }
+        val (manager, parts) = prepared
+
+        val sendSeq = store.markSubmitted(entry.localId, parts.size, requestedSim, subscriptionId, now)
+            ?: return // claimed by another path meanwhile
+        SimRotationManager.onStarted(context, entry.localId, sendSeq, sim, now)
+
+        try {
+            SMSHelper.submit(context, manager, entry, parts, sendSeq, requestedSim, subscriptionId)
+            Log.d(TAG, "Handed SMS ${entry.localId} to the radio on SIM $sim (${parts.size} part(s), attempt ${entry.attempt})")
+        } catch (e: Exception) {
+            val code = failSubmission(context, store, entry, e, now)
+            SimRotationManager.onFinished(
+                context, entry.localId, sendSeq, SimRotationPolicy.outcomeOfError(code),
+                System.currentTimeMillis()
+            )
+            return
+        }
+        MessageSyncNotifier.notifyChanged(context)
+    }
+
+    /** @return the error code reported for the failure. */
     private fun failSubmission(
         context: Context,
         store: OutboxStore,
         entry: OutboxEntry,
         error: Exception,
-        requestedSim: Int?,
-        resolvedSim: Int?,
         now: Long
-    ) {
+    ): String {
         Log.e(TAG, "SmsManager rejected SMS ${entry.localId}: ${error.message}", error)
         val (code, message) = SMSHelper.classifySendException(error)
-        SimFailoverManager.recordSendFailure(
-            context, requestedSim, resolvedSim, entry.batchId, entry.smsId
-        )
         store.finish(entry.localId, LocalState.FAILED, code, message, now)?.let {
             StatusReporter.reportFinal(context, it)
         }
         MessageSyncNotifier.notifyChanged(context)
+        return code
     }
 
     private fun resolveRequestedSim(context: Context, backendSimId: Int?): Int? {

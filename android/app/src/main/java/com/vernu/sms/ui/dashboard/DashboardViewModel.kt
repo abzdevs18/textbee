@@ -23,6 +23,7 @@ import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.helpers.serverErrorMessage
 import com.vernu.sms.outbox.OutboxStore
 import com.vernu.sms.outbox.OutboxSync
+import com.vernu.sms.outbox.SimRotationManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,7 +49,10 @@ data class DashboardState(
     val isBatteryOptimized: Boolean = false,
     val isKeepAliveEnabled: Boolean = true,
     /** SMS this phone holds that are not finished yet (waiting or on the radio). */
-    val pendingOnPhone: Int = 0
+    val pendingOnPhone: Int = 0,
+    val isSimRotationEnabled: Boolean = AppConstants.DEFAULT_SIM_ROTATION_ENABLED,
+    /** SIMs paused after repeated failures; they come back when the app restarts. */
+    val pausedSimIds: Set<Int> = emptySet()
 )
 
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
@@ -160,7 +164,21 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                     0
                 }
             }
-            _state.update { it.copy(pendingOnPhone = pending) }
+            val (rotation, paused) = withContext(Dispatchers.IO) {
+                try {
+                    val enabled = SimRotationManager.isEnabled(context)
+                    enabled to if (enabled) {
+                        SimRotationManager.statuses(context).filter { it.paused }.map { it.sim }.toSet()
+                    } else {
+                        emptySet()
+                    }
+                } catch (e: Exception) {
+                    false to emptySet<Int>()
+                }
+            }
+            _state.update {
+                it.copy(pendingOnPhone = pending, isSimRotationEnabled = rotation, pausedSimIds = paused)
+            }
         }
     }
 

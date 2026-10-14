@@ -155,7 +155,16 @@ fun SettingsScreen(
                 onCheckedChange = { viewModel.setGatewayEnabled(it) }
             )
 
-            if (state.availableSims.size > 1) {
+            SettingsSwitchRow(
+                icon = Icons.Default.SwapHoriz,
+                title = "Alternate SIMs",
+                subtitle = "SIM 1 → SIM 2 → SIM 1 … waiting 20s per SIM after the network confirms. " +
+                    "A SIM that fails 5 SMS in a row is paused until the app restarts.",
+                checked = state.isSimRotationEnabled,
+                onCheckedChange = { viewModel.setSimRotation(it) }
+            )
+
+            if (!state.isSimRotationEnabled && state.availableSims.size > 1) {
                 SimSelectionRow(
                     sims = state.availableSims,
                     selectedId = state.preferredSimSubscriptionId,
@@ -182,7 +191,11 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Default.Timer,
                 title = "Send Delay",
-                subtitle = "${state.smsSendDelaySeconds}s between each SMS",
+                subtitle = if (state.isSimRotationEnabled) {
+                    "${state.smsSendDelaySeconds}s · only used when Alternate SIMs is off"
+                } else {
+                    "${state.smsSendDelaySeconds}s between each SMS"
+                },
                 onClick = {
                     editedDelay = state.smsSendDelaySeconds.toString()
                     showDelayDialog = true

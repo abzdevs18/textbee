@@ -18,6 +18,7 @@ import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
+import com.vernu.sms.outbox.SimRotationManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +37,7 @@ data class SettingsState(
     val isReceiveSmsEnabled: Boolean = false,
     val isStickyNotificationEnabled: Boolean = AppConstants.DEFAULT_STICKY_NOTIFICATION_ENABLED,
     val smsSendDelaySeconds: Int = AppConstants.DEFAULT_SMS_SEND_DELAY_SECONDS,
+    val isSimRotationEnabled: Boolean = AppConstants.DEFAULT_SIM_ROTATION_ENABLED,
     val preferredSimSubscriptionId: Int = -1,
     val availableSims: List<SimOption> = emptyList(),
     val appVersionName: String = BuildConfig.VERSION_NAME,
@@ -127,6 +129,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 isReceiveSmsEnabled = isReceiveSms,
                 isStickyNotificationEnabled = isSticky,
                 smsSendDelaySeconds = smsDelay,
+                isSimRotationEnabled = SimRotationManager.isEnabled(context),
                 preferredSimSubscriptionId = preferredSim,
                 availableSims = sims
             )
@@ -184,6 +187,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(smsSendDelaySeconds = clamped) }
         // The server sizes this phone's lease and in-flight cap from the delay;
         // tell it now rather than at the next scheduled heartbeat.
+        if (_state.value.deviceId.isNotEmpty()) HeartbeatManager.triggerHeartbeat(context)
+    }
+
+    fun setSimRotation(enabled: Boolean) {
+        SharedPreferenceHelper.setSharedPreferenceBoolean(
+            context, AppConstants.SHARED_PREFS_SIM_ROTATION_ENABLED_KEY, enabled
+        )
+        _state.update { it.copy(isSimRotationEnabled = enabled) }
+        // The pace the server sizes leases from changes with the mode.
         if (_state.value.deviceId.isNotEmpty()) HeartbeatManager.triggerHeartbeat(context)
     }
 

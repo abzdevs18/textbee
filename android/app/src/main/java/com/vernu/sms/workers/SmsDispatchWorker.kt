@@ -33,6 +33,9 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
         const val UNIQUE_WORK = "sms_dispatch"
         private const val RUN_BUDGET_MS = 8 * 60 * 1000L
         private const val BUSY_RETRY_MS = 1000L
+
+        /** Waits up to this long are sat out past the run budget (still well under the ~10 min job limit). */
+        private const val SHORT_WAIT_MS = 30_000L
         private const val NOTIFICATION_ID = 7302
         private const val CHANNEL_ID = "sms_dispatch"
 
@@ -92,6 +95,13 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
                 SmsDispatcher.DispatchOutcome.Busy -> delay(BUSY_RETRY_MS)
                 is SmsDispatcher.DispatchOutcome.Wait -> {
                     val remaining = deadline - SystemClock.elapsedRealtime()
+                    if (outcome.delayMs >= remaining && outcome.delayMs <= SHORT_WAIT_MS) {
+                        // A short wait (SIM gap, confirmation poll) is cheaper to sit out than to
+                        // hand to a delayed job, which Doze may postpone; continue as fresh expedited work.
+                        delay(outcome.delayMs)
+                        enqueue(applicationContext)
+                        return@withContext Result.success()
+                    }
                     if (outcome.delayMs >= remaining) {
                         // Hand the rest to a fresh run instead of overstaying the job budget.
                         Log.d(TAG, "Send delay ${outcome.delayMs}ms exceeds run budget; rescheduling")

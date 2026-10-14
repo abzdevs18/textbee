@@ -31,6 +31,12 @@ public class AppConstants {
     public static final String SHARED_PREFS_SMS_SEND_DELAY_SECONDS_KEY = "SMS_SEND_DELAY_SECONDS";
     /** Default delay between SMS sends (seconds). 5s helps avoid carrier/device throttling. */
     public static final int DEFAULT_SMS_SEND_DELAY_SECONDS = 5;
+    /**
+     * Alternate SIMs per SMS (20s gap per SIM, 10s per phone, paced from network
+     * confirmation). On by default; when off, the send delay and default SIM apply.
+     */
+    public static final String SHARED_PREFS_SIM_ROTATION_ENABLED_KEY = "SIM_ROTATION_ENABLED";
+    public static final boolean DEFAULT_SIM_ROTATION_ENABLED = true;
     public static final String SHARED_PREFS_USE_NEW_UI_KEY = "USE_NEW_UI";
     public static final String SHARED_PREFS_LAST_HEARTBEAT_MS_KEY = "LAST_HEARTBEAT_MS";
 }

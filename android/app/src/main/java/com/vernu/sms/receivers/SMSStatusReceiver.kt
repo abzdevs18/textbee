@@ -8,11 +8,11 @@ import android.telephony.SmsManager
 import android.util.Log
 import com.vernu.sms.dtos.SMSDTO
 import com.vernu.sms.helpers.MessageSyncNotifier
-import com.vernu.sms.helpers.SimFailoverManager
-import com.vernu.sms.outbox.LocalState
 import com.vernu.sms.outbox.OutboxEntry
 import com.vernu.sms.outbox.OutboxStore
 import com.vernu.sms.outbox.PartOutcome
+import com.vernu.sms.outbox.SimRotationManager
+import com.vernu.sms.outbox.SimRotationPolicy
 import com.vernu.sms.outbox.SmsDispatcher
 import com.vernu.sms.outbox.StatusReporter
 import java.lang.reflect.Modifier
@@ -139,22 +139,17 @@ class SMSStatusReceiver : BroadcastReceiver() {
     }
 
     private fun complete(context: Context, entry: OutboxEntry) {
-        when (entry.state) {
-            LocalState.SENT, LocalState.DELIVERED -> {
-                Log.d(TAG, "SMS ${entry.localId} ${entry.state.name.lowercase()}")
-                if (entry.state == LocalState.SENT) {
-                    SimFailoverManager.recordSendSuccess(
-                        context, entry.resolvedSimId ?: entry.requestedSimId, entry.batchId
-                    )
-                }
-            }
-            LocalState.FAILED -> SimFailoverManager.recordSendFailure(
-                context, entry.requestedSimId, entry.resolvedSimId, entry.batchId, entry.smsId
-            )
-            else -> Unit
-        }
+        Log.d(TAG, "SMS ${entry.localId} ${entry.state.name.lowercase()}")
+        // The network has answered for this send: SIM health and the next send's gap start here.
+        SimRotationManager.onFinished(
+            context, entry.localId, entry.sendSeq,
+            SimRotationPolicy.outcomeOf(entry.state, entry.errorCode),
+            System.currentTimeMillis()
+        )
         StatusReporter.reportFinal(context, entry)
         MessageSyncNotifier.notifyChanged(context)
+        // Wake the dispatcher now instead of at its next poll.
+        SmsDispatcher.kick(context)
     }
 
     /** Callbacks for PendingIntents created by app versions before the outbox. */

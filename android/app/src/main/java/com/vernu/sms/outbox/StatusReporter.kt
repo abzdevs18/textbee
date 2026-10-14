@@ -16,6 +16,7 @@ object StatusReporter {
     const val ERROR_PERMISSION_DENIED = "PERMISSION_DENIED"
     const val ERROR_INVALID_RECIPIENT = "INVALID_RECIPIENT"
     const val ERROR_SENDING_EXCEPTION = "SENDING_EXCEPTION"
+    const val ERROR_ALL_SIMS_PAUSED = "ALL_SIMS_PAUSED"
 
     /** Reports the final state of an entry (SENT, DELIVERED, FAILED or EXPIRED). */
     @JvmStatic

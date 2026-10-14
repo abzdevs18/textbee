@@ -43,6 +43,7 @@ import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.dtos.SimInfoDTO
 import com.vernu.sms.dtos.SubscriptionResponse
 import com.vernu.sms.dtos.UserProfile
+import com.vernu.sms.outbox.SimRotationPolicy
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -315,7 +316,11 @@ private fun DeviceStatusCard(
                 )
             }
             if (state.availableSims.isNotEmpty()) {
-                SimCardsSection(sims = state.availableSims)
+                SimCardsSection(
+                    sims = state.availableSims,
+                    isRotationEnabled = state.isSimRotationEnabled,
+                    pausedSimIds = state.pausedSimIds
+                )
             }
         }
     }
@@ -480,7 +485,7 @@ private fun friendlyPermissionName(permission: String) = when (permission) {
 }
 
 @Composable
-private fun SimCardsSection(sims: List<SimInfoDTO>) {
+private fun SimCardsSection(sims: List<SimInfoDTO>, isRotationEnabled: Boolean, pausedSimIds: Set<Int>) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
@@ -491,7 +496,7 @@ private fun SimCardsSection(sims: List<SimInfoDTO>) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "SIM Cards",
+            text = if (isRotationEnabled) "SIM Cards · alternating" else "SIM Cards",
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -509,10 +514,12 @@ private fun SimCardsSection(sims: List<SimInfoDTO>) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val paused = sim.subscriptionId in pausedSimIds
             Text(
-                text = "SIM ${(sim.simSlotIndex ?: 0) + 1} · ${sim.carrierName ?: sim.displayName ?: "Unknown"}",
+                text = "SIM ${(sim.simSlotIndex ?: 0) + 1} · ${sim.carrierName ?: sim.displayName ?: "Unknown"}" +
+                    if (paused) " · Paused" else "",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (paused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -538,6 +545,14 @@ private fun SimCardsSection(sims: List<SimInfoDTO>) {
                 }
             }
         }
+    }
+    if (pausedSimIds.isNotEmpty()) {
+        Text(
+            text = "Paused after ${SimRotationPolicy.FAILURE_LIMIT} failed SMS in a row. " +
+                "Reload the SIM, then restart the app to use it again.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error
+        )
     }
 }
 
