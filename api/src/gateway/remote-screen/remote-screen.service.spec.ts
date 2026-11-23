@@ -124,6 +124,29 @@ describe('RemoteScreenService', () => {
     ).rejects.toThrow('No active remote screen session')
   })
 
+  it('a late close from an old viewer does not end a newer session', async () => {
+    const first = await service.start(DEVICE, 'owner')
+    await service.stop(DEVICE, first.sessionId)
+    const second = await service.start(DEVICE, 'owner')
+    expect(second.sessionId).not.toBe(first.sessionId)
+    expect(await service.stop(DEVICE, first.sessionId)).toEqual({ stopped: false })
+    expect((await service.view(DEVICE)).sessionId).toBe(second.sessionId)
+  })
+
+  it('reports the app version the phone last sent', async () => {
+    service = new RemoteScreenService(
+      store,
+      devicesModel({
+        _id: DEVICE,
+        fcmToken: 'token-1',
+        appVersionInfo: { versionCode: 40, versionName: '2.8.22' },
+      }) as never,
+    )
+    expect(await service.start(DEVICE, 'owner')).toEqual(
+      expect.objectContaining({ appVersionCode: 40, appVersionName: '2.8.22' }),
+    )
+  })
+
   it('caps queued input', async () => {
     await service.start(DEVICE, 'owner')
     for (let i = 0; i < 20; i++)
@@ -219,7 +242,9 @@ describe('RemoteScreenController boundary', () => {
     await expect(
       controller.input(DEVICE, { type: 'tap', x: 0, y: 0 }, apiKeyRequest),
     ).rejects.toThrow('dashboard login')
-    await expect(controller.stop(DEVICE, apiKeyRequest)).rejects.toThrow('dashboard login')
+    await expect(controller.stop(DEVICE, undefined, apiKeyRequest)).rejects.toThrow(
+      'dashboard login',
+    )
     expect(service.start).not.toHaveBeenCalled()
     expect(service.queueCommand).not.toHaveBeenCalled()
   })

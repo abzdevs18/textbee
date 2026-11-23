@@ -1,4 +1,4 @@
 <resources>
     <string name="remote_screen_service_label">Gabay SMS remote screen</string>
-    <string name="remote_screen_service_description">Lets the account owner view this gateway phone\'s screen from the Gabay SMS dashboard and tap on it, for example to approve Android\'s \"sending a large number of SMS messages\" prompt. The screen is only captured while a dashboard viewer is open, and a notification is shown while that happens.</string>
+    <string name="remote_screen_service_description">Lets the account owner view this gateway phone\'s screen from the Gabay SMS dashboard and tap on it, for example to approve Android\'s \"sending a large number of SMS messages\" prompt. The screen is only captured while a dashboard viewer is open.</string>
 </resources>

@@ -1,18 +1,13 @@
 package com.vernu.sms.remotescreen
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import com.vernu.sms.ApiManagerKt
 import com.vernu.sms.AppConstants
-import com.vernu.sms.R
 import com.vernu.sms.dtos.RemoteScreenCommand
 import com.vernu.sms.dtos.RemoteScreenStatusRequest
 import com.vernu.sms.helpers.SharedPreferenceHelper
@@ -28,8 +23,6 @@ import kotlin.math.roundToInt
  */
 object RemoteScreen {
     private const val TAG = "RemoteScreen"
-    const val NOTIFICATION_CHANNEL_ID = "remote_screen_v1"
-    const val NOTIFICATION_ID = 7342
     private val SESSION_ID = Regex("^[a-f0-9]{32}$")
 
     /** AccessibilityService.takeScreenshot needs Android 11. */
@@ -58,21 +51,43 @@ object RemoteScreen {
         }
         when (data["action"]) {
             "start" -> {
-                val service = RemoteScreenService.instance
-                when {
-                    !isSupported() -> reportStatus(
+                if (!isSupported()) {
+                    reportStatus(
                         context, sessionId, "unsupported_android",
                         "Android ${Build.VERSION.RELEASE} — remote screen needs Android 11 or newer"
                     )
-                    service == null -> reportStatus(
-                        context, sessionId, "accessibility_disabled",
-                        "Turn on Settings > Accessibility > Gabay SMS remote screen on the phone"
-                    )
-                    else -> service.startSession(sessionId)
+                    return
                 }
+                // Lets the dashboard tell "push never arrived" from "arrived but failing".
+                reportStatus(context, sessionId, "connecting")
+                val service = RemoteScreenService.instance ?: awaitSelfEnabledService(context)
+                if (service == null) {
+                    reportStatus(
+                        context, sessionId, "accessibility_disabled",
+                        if (GatewaySystemSetup.hasSecureSettingsGrant(context))
+                            "Android did not start the remote screen service; restart the phone once"
+                        else
+                            "Turn on Settings > Accessibility > Gabay SMS remote screen on the phone"
+                    )
+                    return
+                }
+                service.startSession(sessionId)
             }
             "stop" -> RemoteScreenService.instance?.stopSession(sessionId)
         }
+    }
+
+    /**
+     * ADB-provisioned phone whose service was switched off by the OS: switch it
+     * back on and wait briefly for Android to bind it. Blocking (FCM thread).
+     */
+    private fun awaitSelfEnabledService(context: Context): RemoteScreenService? {
+        if (!GatewaySystemSetup.ensureRemoteScreenEnabled(context)) return null
+        repeat(25) {
+            RemoteScreenService.instance?.let { return it }
+            Thread.sleep(200)
+        }
+        return RemoteScreenService.instance
     }
 
     /** Blocking; FCM gives us a background thread and ~10s. */
@@ -100,32 +115,6 @@ object RemoteScreen {
         ) ?: ""
         if (deviceId.isBlank() || apiKey.isBlank()) return null
         return deviceId to apiKey
-    }
-
-    fun showViewingNotification(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID, "Remote screen", NotificationManager.IMPORTANCE_LOW
-            ).apply { description = "Shown while the dashboard is viewing this screen" }
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
-        val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Screen is being viewed remotely")
-            .setContentText("A Gabay SMS dashboard user is viewing and can tap this screen.")
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .build()
-        try {
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
-        } catch (e: SecurityException) {
-            // POST_NOTIFICATIONS not granted; streaming still works.
-        }
-    }
-
-    fun clearViewingNotification(context: Context) {
-        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
 }
 

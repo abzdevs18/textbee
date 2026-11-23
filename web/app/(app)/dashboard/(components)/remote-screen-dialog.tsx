@@ -25,7 +25,9 @@ import { formatError } from '@/lib/utils/errorHandler'
 
 type DeviceState =
   | 'starting'
+  | 'connecting'
   | 'streaming'
+  | 'upload_failed'
   | 'accessibility_disabled'
   | 'unsupported_android'
   | 'capture_failed'
@@ -52,6 +54,9 @@ const POLL_MS = 700
 /** A frame older than this means the phone stopped uploading. */
 const STALE_MS = 6000
 const SWIPE_MIN_PX = 12
+/** First Android build with Remote Screen (2.8.23). */
+const MIN_APP_VERSION_CODE = 41
+const RESTART_AFTER_MS = 5000
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value))
 
@@ -77,14 +82,29 @@ export default function RemoteScreenDialog({
   const [now, setNow] = useState(Date.now())
   const sinceRef = useRef<number | undefined>(undefined)
   const lastStatusAt = useRef<number | undefined>(undefined)
+  const sessionIdRef = useRef<string | null>(null)
+  const lastStartAt = useRef(0)
+  const [appVersion, setAppVersion] = useState<{
+    code: number | null
+    name: string | null
+  } | null>(null)
   const pointerStart = useRef<{ x: number; y: number; t: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
 
   const start = useCallback(async () => {
     setStarting(true)
     setError(null)
+    lastStartAt.current = Date.now()
     try {
-      await httpBrowserClient.post(ApiEndpoints.gateway.remoteScreenSession(deviceId))
+      const res = await httpBrowserClient.post(
+        ApiEndpoints.gateway.remoteScreenSession(deviceId),
+      )
+      const data = res.data?.data
+      sessionIdRef.current = data?.sessionId ?? null
+      setAppVersion({
+        code: data?.appVersionCode ?? null,
+        name: data?.appVersionName ?? null,
+      })
     } catch (err) {
       setError(formatError(err).message)
     } finally {
@@ -103,8 +123,12 @@ export default function RemoteScreenDialog({
     lastStatusAt.current = undefined
     void start()
     return () => {
+      // Scoped to our own session so a late close can't end a newer one.
+      const sessionId = sessionIdRef.current
+      sessionIdRef.current = null
+      if (!sessionId) return
       void httpBrowserClient
-        .delete(ApiEndpoints.gateway.remoteScreenSession(deviceId))
+        .delete(ApiEndpoints.gateway.remoteScreenSession(deviceId, sessionId))
         .catch(() => undefined)
     }
   }, [open, deviceId, start])
@@ -138,6 +162,14 @@ export default function RemoteScreenDialog({
           setError(view.status.message ?? 'The session ended')
           return
         }
+        // Session vanished (expired, or ended by another tab): start a new one.
+        if (
+          view &&
+          !view.active &&
+          Date.now() - lastStartAt.current > RESTART_AFTER_MS
+        ) {
+          void start()
+        }
       } catch {
         // Transient; keep polling.
       }
@@ -148,7 +180,7 @@ export default function RemoteScreenDialog({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [open, deviceId])
+  }, [open, deviceId, start])
 
   useEffect(() => {
     if (!open) return
@@ -215,15 +247,22 @@ export default function RemoteScreenDialog({
     !image && (!state || state === 'starting') && now - openedAt > 20000
   const pendingInput = !!sentAt && now - sentAt < 1500
 
+  const outdatedApp =
+    appVersion?.code != null && appVersion.code < MIN_APP_VERSION_CODE
+
   const problem =
-    state === 'accessibility_disabled'
+    state === 'upload_failed'
+      ? `The phone is capturing its screen but cannot upload it${status?.message ? ` (${status.message})` : ''}. Check its internet connection.`
+      : state === 'accessibility_disabled'
       ? 'Remote screen is turned off on the phone. On the phone open Gabay SMS → Settings → Remote Screen and turn on “Gabay SMS remote screen”.'
       : state === 'unsupported_android'
         ? status?.message ?? 'This phone runs an Android version older than 11, which cannot share its screen this way.'
         : state === 'capture_failed'
           ? status?.message ?? 'The phone could not take screenshots.'
           : waitingTooLong
-            ? 'The phone has not answered yet. It may be offline, or running an older app version without Remote Screen — update it to the latest Gabay SMS app.'
+            ? outdatedApp
+              ? `This phone last reported app version ${appVersion?.name ?? appVersion?.code}. Remote Screen needs Gabay SMS 2.8.24 — install the update on the phone.`
+              : 'The phone has not answered yet. It may be offline, asleep with background activity restricted, or not yet updated to Gabay SMS 2.8.24.'
             : null
 
   return (
@@ -275,7 +314,11 @@ export default function RemoteScreenDialog({
           ) : (
             <div className='flex flex-col items-center gap-2 p-6 text-center text-xs text-white/70'>
               <Loader2 className='h-5 w-5 animate-spin' />
-              {starting ? 'Waking the phone…' : 'Waiting for the phone’s screen…'}
+              {starting
+                ? 'Waking the phone…'
+                : state === 'connecting'
+                  ? 'Phone received the request — capturing the screen…'
+                  : 'Waiting for the phone to answer…'}
             </div>
           )}
           {pendingInput && (
@@ -324,8 +367,7 @@ export default function RemoteScreenDialog({
           </Button>
         </div>
         <p className='text-center text-[11px] text-muted-foreground'>
-          The phone shows a notification while it is being viewed. Viewing stops
-          when you close this window, or after 30 minutes.
+          Viewing stops when you close this window, or after 30 minutes.
         </p>
       </DialogContent>
     </Dialog>

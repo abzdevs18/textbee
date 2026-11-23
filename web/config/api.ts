@@ -33,8 +33,10 @@ export const ApiEndpoints = {
     sendBulkSMS: (id: string) => `/gateway/devices/${id}/send-bulk-sms`,
     getReceivedSMS: (id: string) => `/gateway/devices/${id}/get-received-sms`,
     getMessages: (id: string) => `/gateway/devices/${id}/messages`,
-    remoteScreenSession: (id: string) =>
-      `/gateway/devices/${id}/remote-screen/session`,
+    remoteScreenSession: (id: string, sessionId?: string) =>
+      sessionId
+        ? `/gateway/devices/${id}/remote-screen/session?sessionId=${sessionId}`
+        : `/gateway/devices/${id}/remote-screen/session`,
     remoteScreen: (id: string, since?: number) =>
       since
         ? `/gateway/devices/${id}/remote-screen?since=${since}`

@@ -18,6 +18,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Remote screen keeps the display on while a dashboard viewer is watching. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Never granted at install. Granted once over ADB so the app can keep its
+         Remote Screen service on and lift Android's SMS-count prompt by itself. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <!-- Gateway phones must act on server pushes with the screen off (Doze exemption prompt). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <application

@@ -59,9 +59,17 @@ export class RemoteScreenController {
 
   @ApiOperation({ summary: 'Stop viewing the phone screen' })
   @Delete('/session')
-  async stop(@Param('id') deviceId: string, @Request() req) {
+  async stop(
+    @Param('id') deviceId: string,
+    @Query('sessionId') sessionId: string | undefined,
+    @Request() req,
+  ) {
     this.requireDashboardLogin(req)
-    return { data: await this.remoteScreen.stop(deviceId) }
+    const scoped =
+      typeof sessionId === 'string' && /^[a-f0-9]{32}$/.test(sessionId)
+        ? sessionId
+        : undefined
+    return { data: await this.remoteScreen.stop(deviceId, scoped) }
   }
 
   @ApiOperation({ summary: 'Poll the latest screen frame (keeps the session alive)' })

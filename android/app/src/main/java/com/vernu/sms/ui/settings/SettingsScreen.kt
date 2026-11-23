@@ -27,6 +27,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vernu.sms.BuildConfig
 import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.ServiceAlertNotifications
+import com.vernu.sms.remotescreen.GatewaySystemSetup
 import com.vernu.sms.remotescreen.RemoteScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,12 +63,17 @@ fun SettingsScreen(
         mutableStateOf(GatewayReliability.isIgnoringBatteryOptimizations(context))
     }
     var remoteScreenEnabled by remember { mutableStateOf(RemoteScreen.isServiceEnabled(context)) }
+    var systemSetupGranted by remember { mutableStateOf(GatewaySystemSetup.hasSecureSettingsGrant(context)) }
+    var smsLimitLifted by remember { mutableStateOf(GatewaySystemSetup.isSmsLimitLifted(context)) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 batteryUnrestricted = GatewayReliability.isIgnoringBatteryOptimizations(context)
+                GatewaySystemSetup.ensure(context)
+                systemSetupGranted = GatewaySystemSetup.hasSecureSettingsGrant(context)
                 remoteScreenEnabled = RemoteScreen.isServiceEnabled(context)
+                smsLimitLifted = GatewaySystemSetup.isSmsLimitLifted(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -277,6 +283,8 @@ fun SettingsScreen(
                 subtitle = when {
                     !RemoteScreen.isSupported() ->
                         "Needs Android 11 or newer"
+                    remoteScreenEnabled && systemSetupGranted ->
+                        "On — kept on automatically (ADB setup done)"
                     remoteScreenEnabled ->
                         "On — the dashboard can view this screen and tap prompts like \"Allow\""
                     else ->
@@ -298,6 +306,19 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else null
+            )
+
+            SettingsRow(
+                icon = Icons.Default.Speed,
+                title = "Android SMS Limit",
+                subtitle = when {
+                    smsLimitLifted ->
+                        "Lifted — Android will not ask to allow large numbers of SMS"
+                    systemSetupGranted ->
+                        "Lifting… reopen this screen"
+                    else ->
+                        "Default — Android may ask \"Allow\" after ~30 SMS. Lift it with the one-time ADB setup."
+                }
             )
 
             SettingsRow(

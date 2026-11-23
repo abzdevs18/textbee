@@ -54,7 +54,7 @@ export class RemoteScreenService {
   async start(deviceId: string, viewerId: string) {
     const device = await this.devices
       .findById(deviceId)
-      .select('_id fcmToken')
+      .select('_id fcmToken appVersionInfo')
       .lean()
       .exec()
     if (!device?.fcmToken)
@@ -80,11 +80,24 @@ export class RemoteScreenService {
     // Always re-push: the phone may have missed the first one, or the viewer
     // pressed "Retry" because nothing arrived.
     await this.push(device.fcmToken, deviceId, 'start', session.sessionId)
-    return { sessionId: session.sessionId, startedAt: session.startedAt }
+    return {
+      sessionId: session.sessionId,
+      startedAt: session.startedAt,
+      // Last version the phone reported in its heartbeat, so the viewer can
+      // tell "old app" apart from "phone offline".
+      appVersionCode: device.appVersionInfo?.versionCode ?? null,
+      appVersionName: device.appVersionInfo?.versionName ?? null,
+    }
   }
 
-  async stop(deviceId: string) {
+  /**
+   * Ends the session. With `sessionId`, only that session is ended: a viewer
+   * that closes late must not end a newer viewer's session.
+   */
+  async stop(deviceId: string, sessionId?: string) {
     const session = await this.store.getSession(deviceId)
+    if (session && sessionId && session.sessionId !== sessionId)
+      return { stopped: false }
     await this.store.clear(deviceId)
     if (!session) return { stopped: true }
     const device = await this.devices

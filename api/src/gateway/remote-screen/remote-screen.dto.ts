@@ -31,7 +31,11 @@ export type RemoteScreenCommand =
 
 export type RemoteScreenDeviceState =
   | 'starting'
+  /** Phone received the push and is starting capture. */
+  | 'connecting'
   | 'streaming'
+  /** Phone captures but its uploads are being rejected / failing. */
+  | 'upload_failed'
   | 'accessibility_disabled'
   | 'unsupported_android'
   | 'capture_failed'
@@ -39,7 +43,9 @@ export type RemoteScreenDeviceState =
 
 export const REMOTE_SCREEN_DEVICE_STATES: RemoteScreenDeviceState[] = [
   'starting',
+  'connecting',
   'streaming',
+  'upload_failed',
   'accessibility_disabled',
   'unsupported_android',
   'capture_failed',

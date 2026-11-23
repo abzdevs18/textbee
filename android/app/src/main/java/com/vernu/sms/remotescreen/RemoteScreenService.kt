@@ -109,7 +109,6 @@ class RemoteScreenService : AccessibilityService() {
         sessionJob = null
         sessionId = null
         releaseWakeLock()
-        RemoteScreen.clearViewingNotification(this)
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
@@ -119,7 +118,6 @@ class RemoteScreenService : AccessibilityService() {
             return
         }
         Log.i(TAG, "Remote screen session started")
-        RemoteScreen.showViewingNotification(this)
         acquireWakeLock()
         val api = ApiManagerKt.getApiService()
         val deadline = SystemClock.elapsedRealtime() + MAX_SESSION_MS
@@ -155,15 +153,22 @@ class RemoteScreenService : AccessibilityService() {
                     RemoteScreenFrameRequest(sessionId = id)
                 }
 
+                var failure: String? = null
                 val reply: RemoteScreenFrameData? = try {
                     val response = api.uploadRemoteScreenFrame(deviceId, apiKey, body)
-                    if (response.isSuccessful) response.body()?.data else null
+                    if (response.isSuccessful) response.body()?.data
+                    else null.also { failure = "HTTP ${response.code()}" }
                 } catch (e: Exception) {
                     Log.w(TAG, "Frame upload failed: ${e.message}")
+                    failure = e.javaClass.simpleName
                     null
                 }
                 if (reply == null) {
                     uploadFailures++
+                    // Tell the viewer once instead of failing silently.
+                    if (uploadFailures == 3) {
+                        RemoteScreen.reportStatus(this, id, "upload_failed", failure)
+                    }
                     if (uploadFailures >= MAX_UPLOAD_FAILURES) break
                     delay(1_500)
                     continue
@@ -185,7 +190,6 @@ class RemoteScreenService : AccessibilityService() {
                 if (sessionId == id) {
                     sessionId = null
                     releaseWakeLock()
-                    RemoteScreen.clearViewingNotification(this)
                 }
             }
         }

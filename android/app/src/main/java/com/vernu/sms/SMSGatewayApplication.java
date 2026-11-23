@@ -7,6 +7,7 @@ import androidx.work.Configuration;
 import androidx.work.WorkManager;
 
 import com.vernu.sms.workers.SmsDispatchWorker;
+import com.vernu.sms.remotescreen.GatewaySystemSetup;
 
 public class SMSGatewayApplication extends Application implements Configuration.Provider {
     private static final String TAG = "SMSGatewayApplication";
@@ -28,6 +29,9 @@ public class SMSGatewayApplication extends Application implements Configuration.
 
         // Clears dispatch runs an older version left scheduled (2.8.21 could park one forever).
         SmsDispatchWorker.resetAfterUpdate(this);
+
+        // ADB-provisioned phones: keep Remote Screen on and the SMS-count prompt off.
+        GatewaySystemSetup.ensure(this);
     }
     
     @Override
