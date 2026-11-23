@@ -13,8 +13,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Remote screen keeps the display on while a dashboard viewer is watching. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Gateway phones must act on server pushes with the screen off (Doze exemption prompt). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <application
@@ -44,6 +47,19 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging">
+        </service>
+        <!-- Dashboard remote screen: screenshots + taps, only while a viewer is open. -->
+        <service
+            android:name=".remotescreen.RemoteScreenService"
+            android:exported="false"
+            android:label="@string/remote_screen_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/remote_screen_accessibility_service" />
         </service>
         <receiver
             android:name=".receivers.SMSBroadcastReceiver"

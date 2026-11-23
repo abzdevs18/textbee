@@ -26,6 +26,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vernu.sms.BuildConfig
 import com.vernu.sms.helpers.GatewayReliability
+import com.vernu.sms.helpers.ServiceAlertNotifications
+import com.vernu.sms.remotescreen.RemoteScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,11 +61,13 @@ fun SettingsScreen(
     var batteryUnrestricted by remember {
         mutableStateOf(GatewayReliability.isIgnoringBatteryOptimizations(context))
     }
+    var remoteScreenEnabled by remember { mutableStateOf(RemoteScreen.isServiceEnabled(context)) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 batteryUnrestricted = GatewayReliability.isIgnoringBatteryOptimizations(context)
+                remoteScreenEnabled = RemoteScreen.isServiceEnabled(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -143,6 +147,15 @@ fun SettingsScreen(
                 title = "Disconnect Device",
                 titleColor = MaterialTheme.colorScheme.error,
                 onClick = { showDisconnectDialog = true }
+            )
+
+            SettingsSectionHeader("Notifications")
+
+            SettingsRow(
+                icon = Icons.Default.Notifications,
+                title = "Service alerts",
+                subtitle = "Sound, vibration and pop-up settings for platform alerts",
+                onClick = { ServiceAlertNotifications.openSettings(context) }
             )
 
             SettingsSectionHeader("Gateway")
@@ -256,6 +269,35 @@ fun SettingsScreen(
                     Icon(Icons.Default.ChevronRight, contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            )
+
+            SettingsRow(
+                icon = Icons.Default.ScreenShare,
+                title = "Remote Screen",
+                subtitle = when {
+                    !RemoteScreen.isSupported() ->
+                        "Needs Android 11 or newer"
+                    remoteScreenEnabled ->
+                        "On — the dashboard can view this screen and tap prompts like \"Allow\""
+                    else ->
+                        "Off — tap, then turn on \"Gabay SMS remote screen\". If it is greyed out: " +
+                            "App info > ⋮ > Allow restricted settings"
+                },
+                onClick = if (RemoteScreen.isSupported()) {
+                    {
+                        try {
+                            context.startActivity(RemoteScreen.accessibilitySettingsIntent())
+                        } catch (e: Exception) {
+                            viewModel.showMessage("Open Settings > Accessibility > Gabay SMS remote screen")
+                        }
+                    }
+                } else null,
+                trailing = if (RemoteScreen.isSupported()) {
+                    {
+                        Icon(Icons.Default.ChevronRight, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else null
             )
 
             SettingsRow(

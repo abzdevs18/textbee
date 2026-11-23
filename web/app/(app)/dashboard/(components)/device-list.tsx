@@ -15,6 +15,7 @@ import {
   TriangleAlert,
   Power,
   PowerOff,
+  MonitorSmartphone,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
@@ -52,6 +53,7 @@ import {
   isDeviceOutdated,
   latestAppVersionCode,
 } from './update-app-helpers'
+import RemoteScreenDialog from './remote-screen-dialog'
 
 type DeviceRow = DeviceVersionCandidate & {
   createdAt: string
@@ -68,6 +70,8 @@ export default function DeviceList() {
   const [devicePendingDisable, setDevicePendingDisable] =
     useState<DeviceRow | null>(null)
   const [togglingDeviceId, setTogglingDeviceId] = useState<string | null>(null)
+  const [remoteScreenDevice, setRemoteScreenDevice] =
+    useState<DeviceRow | null>(null)
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const {
@@ -333,6 +337,17 @@ export default function DeviceList() {
                           )}
                         </Label>
                       </div>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        className='h-8'
+                        onClick={() =>
+                          setRemoteScreenDevice(device as DeviceRow)
+                        }
+                      >
+                        <MonitorSmartphone className='mr-1 h-4 w-4' />
+                        View screen
+                      </Button>
                       <div className='flex items-center space-x-2'>
                         <code className='relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs'>
                           {device._id}
@@ -406,6 +421,14 @@ export default function DeviceList() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
+                      <DropdownMenuItem
+                        onClick={() =>
+                          setRemoteScreenDevice(device as DeviceRow)
+                        }
+                      >
+                        <MonitorSmartphone className='mr-2 h-4 w-4' />
+                        View screen
+                      </DropdownMenuItem>
                       {device.enabled ? (
                         <DropdownMenuItem
                           onClick={() =>
@@ -449,6 +472,17 @@ export default function DeviceList() {
           </div>
       </CardContent>
       </Card>
+
+      {remoteScreenDevice && (
+        <RemoteScreenDialog
+          deviceId={remoteScreenDevice._id}
+          deviceName={formatDeviceName(remoteScreenDevice)}
+          open={!!remoteScreenDevice}
+          onOpenChange={(open) => {
+            if (!open) setRemoteScreenDevice(null)
+          }}
+        />
+      )}
 
       <Dialog
         open={addDeviceInstructionOpen}

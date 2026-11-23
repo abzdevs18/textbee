@@ -13,10 +13,12 @@ import com.vernu.sms.helpers.GatewayConfigSync
 import com.vernu.sms.helpers.HeartbeatHelper
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SMSHelper
+import com.vernu.sms.helpers.ServiceAlertNotifications
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.models.SMSPayload
 import com.vernu.sms.outbox.OutboxSync
 import com.vernu.sms.outbox.SmsDispatcher
+import com.vernu.sms.remotescreen.RemoteScreen
 import com.vernu.sms.workers.OutboxClaimWorker
 import retrofit2.Call
 import retrofit2.Callback
@@ -42,6 +44,23 @@ class FCMService : FirebaseMessagingService() {
 
         try {
             when (remoteMessage.data["type"]) {
+                "platform_alert" -> {
+                    ServiceAlertNotifications.show(this, remoteMessage.data)
+                    return
+                }
+                // Dashboard opened/closed the live screen viewer for this phone
+                "remote_screen" -> {
+                    val target = remoteMessage.data["targetDeviceId"]
+                    val local = SharedPreferenceHelper.getSharedPreferenceString(
+                        this, AppConstants.SHARED_PREFS_DEVICE_ID_KEY, ""
+                    ) ?: ""
+                    if (target.isNullOrBlank() || target != local) {
+                        Log.w(TAG, "Ignoring remote_screen push for another device")
+                        return
+                    }
+                    RemoteScreen.handlePush(this, remoteMessage.data)
+                    return
+                }
                 "heartbeat_check" -> {
                     handleHeartbeatCheck()
                     return

@@ -26,6 +26,7 @@ import com.vernu.sms.activities.MainActivity
 import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
+import com.vernu.sms.helpers.ServiceAlertNotifications
 import com.vernu.sms.ui.dashboard.DashboardScreen
 import com.vernu.sms.ui.messages.ComposeScreen
 import com.vernu.sms.ui.messages.MessagesScreen
@@ -44,6 +45,7 @@ class NewMainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ServiceAlertNotifications.requestPermission(this)
         setContent {
             TextBeeTheme {
                 val navController = rememberNavController()

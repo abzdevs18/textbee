@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Screen capture (Android 11+) and taps for the dashboard's remote screen viewer.
+     No window content is read; the service reacts only to explicit viewer commands. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/remote_screen_service_description"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:notificationTimeout="1000"
+    android:canRetrieveWindowContent="false"
+    android:canPerformGestures="true"
+    android:canTakeScreenshot="true" />

@@ -32,12 +32,24 @@ import {
 } from './gateway.dto'
 import { GatewayService } from './gateway.service'
 import { CanModifyDevice } from './guards/can-modify-device.guard'
+import { PushNotificationService } from './push-notification.service'
+import { parsePushNotification } from './push-notification.dto'
 
 @ApiTags('gateway')
 @ApiBearerAuth()
 @Controller('gateway')
 export class GatewayController {
-  constructor(private readonly gatewayService: GatewayService) {}
+  constructor(private readonly gatewayService: GatewayService, private readonly pushes: PushNotificationService) {}
+
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Send a general app notification to all devices in this account' })
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Post('/push-notifications')
+  async pushNotification(@Request() req, @Body() body: unknown) {
+    const input = parsePushNotification(body)
+    const data = await this.pushes.sendToAccount(String(req.user._id || req.user.id), input)
+    return { data }
+  }
 
   @UseGuards(AuthGuard)
   @Get('/stats')

@@ -764,6 +764,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        com.vernu.sms.helpers.ServiceAlertNotifications.requestPermission(this);
         // Reflect remote web disable/enable without re-firing the toggle API
         if (gatewaySwitch != null && mContext != null) {
             bindGatewaySwitch(true);

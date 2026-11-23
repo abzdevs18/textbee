@@ -17,6 +17,13 @@ import { SmsQueueProcessor } from './queue/sms-queue.processor'
 import { SmsStatusUpdateTask } from './tasks/sms-status-update.task'
 import { HeartbeatCheckTask } from './tasks/heartbeat-check.task'
 import { SmsOutboxService } from './sms-outbox.service'
+import { PushNotificationService } from './push-notification.service'
+import { RemoteScreenController } from './remote-screen/remote-screen.controller'
+import { RemoteScreenService } from './remote-screen/remote-screen.service'
+import {
+  createRemoteScreenStore,
+  RemoteScreenStore,
+} from './remote-screen/remote-screen.store'
 
 @Module({
   imports: [
@@ -64,9 +71,17 @@ import { SmsOutboxService } from './sms-outbox.service'
     forwardRef(() => BillingModule),
     ConfigModule,
   ],
-  controllers: [GatewayController],
+  controllers: [GatewayController, RemoteScreenController],
   providers: [
     GatewayService,
+    PushNotificationService,
+    RemoteScreenService,
+    {
+      provide: RemoteScreenStore,
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        createRemoteScreenStore(configService.get<string>('REDIS_URL')),
+    },
     SmsOutboxService,
     SmsQueueService,
     SmsQueueProcessor,
