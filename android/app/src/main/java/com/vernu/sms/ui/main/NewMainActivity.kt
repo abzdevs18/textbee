@@ -43,6 +43,13 @@ enum class MainDestination(val label: String, val icon: ImageVector) {
 
 class NewMainActivity : ComponentActivity() {
 
+    override fun onResume() {
+        super.onResume()
+        // Re-arms the security camera after a reboot/kill: Android only grants
+        // camera access to a service started while the app is on screen.
+        com.vernu.sms.remotescreen.SecurityCamera.arm(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ServiceAlertNotifications.requestPermission(this)

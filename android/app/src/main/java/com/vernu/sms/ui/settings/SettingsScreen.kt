@@ -29,6 +29,10 @@ import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.ServiceAlertNotifications
 import com.vernu.sms.remotescreen.GatewaySystemSetup
 import com.vernu.sms.remotescreen.RemoteScreen
+import com.vernu.sms.remotescreen.SecurityCamera
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +69,17 @@ fun SettingsScreen(
     var remoteScreenEnabled by remember { mutableStateOf(RemoteScreen.isServiceEnabled(context)) }
     var systemSetupGranted by remember { mutableStateOf(GatewaySystemSetup.hasSecureSettingsGrant(context)) }
     var smsLimitLifted by remember { mutableStateOf(GatewaySystemSetup.isSmsLimitLifted(context)) }
+    var securityCameraOn by remember { mutableStateOf(SecurityCamera.isEnabled(context)) }
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            SecurityCamera.setEnabled(context, true)
+            securityCameraOn = true
+        } else {
+            viewModel.showMessage("Camera permission is needed for the security camera")
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -308,6 +323,28 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else null
+            )
+
+            SettingsSwitchRow(
+                icon = Icons.Default.Videocam,
+                title = "Security Camera",
+                subtitle = if (securityCameraOn) {
+                    "On — the dashboard can view this phone's camera live. The camera only opens while someone is watching."
+                } else {
+                    "Off — turn on to watch this phone's camera from the dashboard (e.g. as a server-room camera)"
+                },
+                checked = securityCameraOn,
+                onCheckedChange = { on ->
+                    if (!on) {
+                        SecurityCamera.setEnabled(context, false)
+                        securityCameraOn = false
+                    } else if (SecurityCamera.hasPermission(context)) {
+                        SecurityCamera.setEnabled(context, true)
+                        securityCameraOn = true
+                    } else {
+                        cameraPermission.launch(Manifest.permission.CAMERA)
+                    }
+                }
             )
 
             SettingsRow(

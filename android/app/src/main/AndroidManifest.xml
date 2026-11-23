@@ -20,6 +20,12 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Android 10 remote screen: screen capture needs a mediaProjection foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Security camera: live view of this phone's camera from the dashboard. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
     <!-- Never granted at install. Granted once over ADB so the app can keep its
          Remote Screen service on and lift Android's SMS-count prompt by itself. -->
     <uses-permission
@@ -75,6 +81,10 @@
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service
+            android:name=".remotescreen.SecurityCameraService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
         <service
             android:name=".remotescreen.ProjectionForegroundService"
             android:exported="false"

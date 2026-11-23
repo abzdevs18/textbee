@@ -46,6 +46,26 @@ export const ApiEndpoints = {
     },
     remoteScreenInput: (id: string) =>
       `/gateway/devices/${id}/remote-screen/input`,
+    remoteCameraSession: (id: string, sessionId?: string) =>
+      sessionId
+        ? `/gateway/devices/${id}/remote-camera/session?sessionId=${sessionId}`
+        : `/gateway/devices/${id}/remote-camera/session`,
+    remoteCamera: (
+      id: string,
+      opts: { since?: number; statusAt?: number; wait?: boolean } = {},
+    ) => {
+      const params = new URLSearchParams()
+      if (opts.wait) params.set('wait', '1')
+      if (opts.since) params.set('since', String(opts.since))
+      if (opts.statusAt) params.set('statusAt', String(opts.statusAt))
+      const query = params.toString()
+      return `/gateway/devices/${id}/remote-camera${query ? `?${query}` : ''}`
+    },
+    remoteCameraInput: (id: string) =>
+      `/gateway/devices/${id}/remote-camera/input`,
+    /** Relative to the API base URL; an <img> plays it directly. */
+    remoteCameraStream: (id: string, token: string, attempt = 0) =>
+      `/gateway/devices/${id}/remote-camera/stream?token=${encodeURIComponent(token)}&r=${attempt}`,
     listAccountMessages: () => '/gateway/messages',
     resendMessages: () => '/gateway/messages/resend',
     cancelMessage: (smsId: string) => `/gateway/messages/${smsId}/cancel`,

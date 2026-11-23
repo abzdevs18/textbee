@@ -5,7 +5,9 @@ class RemoteScreenFrameRequest(
     val sessionId: String,
     val width: Int? = null,
     val height: Int? = null,
-    val image: String? = null
+    val image: String? = null,
+    /** Increasing per session; lets the server drop frames that arrive late. */
+    val seq: Long? = null
 )
 
 class RemoteScreenStatusRequest(
@@ -24,6 +26,7 @@ class RemoteScreenCommand {
     var x2: Double? = null
     var y2: Double? = null
     var durationMs: Long? = null
+    /** global: back/home/…; camera: switch/rotate. */
     var action: String? = null
 }
 

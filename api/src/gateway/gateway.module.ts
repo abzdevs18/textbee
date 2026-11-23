@@ -21,6 +21,14 @@ import { PushNotificationService } from './push-notification.service'
 import { RemoteScreenController } from './remote-screen/remote-screen.controller'
 import { RemoteScreenService } from './remote-screen/remote-screen.service'
 import {
+  RemoteCameraController,
+  RemoteCameraStreamController,
+} from './remote-screen/remote-camera.controller'
+import {
+  REMOTE_CAMERA_STORE,
+  RemoteCameraService,
+} from './remote-screen/remote-camera.service'
+import {
   createRemoteScreenStore,
   RemoteScreenStore,
 } from './remote-screen/remote-screen.store'
@@ -71,7 +79,12 @@ import {
     forwardRef(() => BillingModule),
     ConfigModule,
   ],
-  controllers: [GatewayController, RemoteScreenController],
+  controllers: [
+    GatewayController,
+    RemoteScreenController,
+    RemoteCameraController,
+    RemoteCameraStreamController,
+  ],
   providers: [
     GatewayService,
     PushNotificationService,
@@ -81,6 +94,16 @@ import {
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>
         createRemoteScreenStore(configService.get<string>('REDIS_URL')),
+    },
+    RemoteCameraService,
+    {
+      provide: REMOTE_CAMERA_STORE,
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        createRemoteScreenStore(
+          configService.get<string>('REDIS_URL'),
+          'remote-camera',
+        ),
     },
     SmsOutboxService,
     SmsQueueService,

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   HttpException,
@@ -10,7 +11,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose'
 import { Model } from 'mongoose'
 import * as firebase from 'firebase-admin'
-import { randomBytes } from 'crypto'
+import { randomBytes, timingSafeEqual } from 'crypto'
 import { Device, DeviceDocument } from '../schemas/device.schema'
 import {
   RemoteScreenCommand,
@@ -35,6 +36,7 @@ export const REMOTE_SCREEN_MAX_QUEUED_COMMANDS = 20
 /** Long-poll: hold a request open this long waiting for something new. */
 export const REMOTE_SCREEN_MAX_WAIT_MS = 8_000
 const LONG_POLL_STEP_MS = 100
+const STREAM_STEP_MS = 40
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -48,11 +50,13 @@ export interface RemoteScreenView {
 
 @Injectable()
 export class RemoteScreenService {
-  private readonly logger = new Logger(RemoteScreenService.name)
+  protected readonly logger = new Logger(RemoteScreenService.name)
+  /** FCM data `type` the phone dispatches on. */
+  protected readonly pushType: string = 'remote_screen'
 
   constructor(
-    private readonly store: RemoteScreenStore,
-    @InjectModel(Device.name) private readonly devices: Model<DeviceDocument>,
+    protected readonly store: RemoteScreenStore,
+    @InjectModel(Device.name) protected readonly devices: Model<DeviceDocument>,
   ) {}
 
   /** Starts (or rejoins) a viewing session and wakes the phone over FCM. */
@@ -68,11 +72,14 @@ export class RemoteScreenService {
       )
 
     const existing = await this.store.getSession(deviceId)
-    const session: RemoteScreenSession = existing ?? {
-      sessionId: randomBytes(16).toString('hex'),
-      startedAt: Date.now(),
-      startedBy: viewerId,
-    }
+    const session: RemoteScreenSession = existing
+      ? { ...existing, streamToken: existing.streamToken ?? randomBytes(24).toString('hex') }
+      : {
+          sessionId: randomBytes(16).toString('hex'),
+          startedAt: Date.now(),
+          startedBy: viewerId,
+          streamToken: randomBytes(24).toString('hex'),
+        }
     await this.store.setSession(deviceId, session, REMOTE_SCREEN_SESSION_TTL_MS)
     if (!existing) {
       await this.store.setStatus(
@@ -88,6 +95,7 @@ export class RemoteScreenService {
     return {
       sessionId: session.sessionId,
       startedAt: session.startedAt,
+      streamToken: session.streamToken,
       // Last version the phone reported in its heartbeat, so the viewer can
       // tell "old app" apart from "phone offline".
       appVersionCode: device.appVersionInfo?.versionCode ?? null,
@@ -230,10 +238,17 @@ export class RemoteScreenService {
     if (!session || session.sessionId !== input.sessionId)
       return { active: false, commands: [] as RemoteScreenCommand[] }
 
-    const existing =
-      input.image === undefined ? await this.store.getFrame(deviceId) : null
+    const existing = await this.store.getFrame(deviceId)
+    // Parallel uploads can land out of order: never replace a newer frame.
+    const stale =
+      input.seq !== undefined &&
+      existing?.sessionId === input.sessionId &&
+      existing.seq !== undefined &&
+      existing.seq >= input.seq
     await Promise.all([
-      input.image !== undefined
+      stale
+        ? Promise.resolve()
+        : input.image !== undefined
         ? this.store.setFrame(
             deviceId,
             {
@@ -242,6 +257,7 @@ export class RemoteScreenService {
               height: input.height,
               image: input.image,
               capturedAt: Date.now(),
+              ...(input.seq !== undefined ? { seq: input.seq } : {}),
             },
             REMOTE_SCREEN_FRAME_TTL_MS,
           )
@@ -258,6 +274,52 @@ export class RemoteScreenService {
     ])
     const commands = await this.store.drainCommands(deviceId)
     return { active: true, commands }
+  }
+
+  /**
+   * Viewer MJPEG stream: calls `onFrame` with each new JPEG until the session
+   * ends, the viewer goes away (`isClosed`) or the session cap is hit.
+   * Authenticated by the session's stream token instead of a login header,
+   * because an <img> tag cannot send one.
+   */
+  async streamFrames(
+    deviceId: string,
+    streamToken: string,
+    onFrame: (jpeg: Buffer) => Promise<void> | void,
+    isClosed: () => boolean,
+  ) {
+    const session = await this.store.getSession(deviceId)
+    if (
+      !session?.streamToken ||
+      typeof streamToken !== 'string' ||
+      streamToken.length !== session.streamToken.length ||
+      !timingSafeEqual(Buffer.from(streamToken), Buffer.from(session.streamToken))
+    )
+      throw new ForbiddenException('Invalid or expired stream')
+
+    let lastCapturedAt = 0
+    let lastRefresh = 0
+    while (!isClosed()) {
+      const current = await this.store.getSession(deviceId)
+      if (!current || current.sessionId !== session.sessionId) return
+      if (Date.now() - current.startedAt > REMOTE_SCREEN_MAX_SESSION_MS) return
+      if (Date.now() - lastRefresh > 5_000) {
+        // Watching the stream keeps the session alive like a poll does.
+        await this.store.setSession(deviceId, current, REMOTE_SCREEN_SESSION_TTL_MS)
+        lastRefresh = Date.now()
+      }
+      const frame = await this.store.getFrame(deviceId)
+      if (
+        frame?.sessionId === session.sessionId &&
+        frame.image &&
+        frame.capturedAt > lastCapturedAt
+      ) {
+        lastCapturedAt = frame.capturedAt
+        await onFrame(Buffer.from(frame.image, 'base64'))
+      } else {
+        await sleep(STREAM_STEP_MS)
+      }
+    }
   }
 
   /** Phone reports why it cannot stream (accessibility off, Android too old...). */
@@ -281,12 +343,12 @@ export class RemoteScreenService {
     try {
       await firebase.messaging().send({
         token,
-        data: { type: 'remote_screen', action, sessionId, targetDeviceId: deviceId },
+        data: { type: this.pushType, action, sessionId, targetDeviceId: deviceId },
         android: { priority: 'high', ttl: 60_000 },
       })
     } catch (error) {
       this.logger.warn(
-        `Remote screen ${action} push failed for device ${deviceId}: ${
+        `${this.pushType} ${action} push failed for device ${deviceId}: ${
           (error as { code?: string })?.code ?? 'unknown'
         }`,
       )

@@ -16,6 +16,7 @@ import {
   Power,
   PowerOff,
   MonitorSmartphone,
+  Video,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
@@ -54,6 +55,7 @@ import {
   latestAppVersionCode,
 } from './update-app-helpers'
 import RemoteScreenDialog from './remote-screen-dialog'
+import CameraDialog from './camera-dialog'
 
 type DeviceRow = DeviceVersionCandidate & {
   createdAt: string
@@ -72,6 +74,7 @@ export default function DeviceList() {
   const [togglingDeviceId, setTogglingDeviceId] = useState<string | null>(null)
   const [remoteScreenDevice, setRemoteScreenDevice] =
     useState<DeviceRow | null>(null)
+  const [cameraDevice, setCameraDevice] = useState<DeviceRow | null>(null)
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const {
@@ -348,6 +351,15 @@ export default function DeviceList() {
                         <MonitorSmartphone className='mr-1 h-4 w-4' />
                         View screen
                       </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        className='h-8'
+                        onClick={() => setCameraDevice(device as DeviceRow)}
+                      >
+                        <Video className='mr-1 h-4 w-4' />
+                        View camera
+                      </Button>
                       <div className='flex items-center space-x-2'>
                         <code className='relative rounded bg-muted px-[0.3rem] py-[0.2rem] font-mono text-xs'>
                           {device._id}
@@ -429,6 +441,12 @@ export default function DeviceList() {
                         <MonitorSmartphone className='mr-2 h-4 w-4' />
                         View screen
                       </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setCameraDevice(device as DeviceRow)}
+                      >
+                        <Video className='mr-2 h-4 w-4' />
+                        View camera
+                      </DropdownMenuItem>
                       {device.enabled ? (
                         <DropdownMenuItem
                           onClick={() =>
@@ -480,6 +498,17 @@ export default function DeviceList() {
           open={!!remoteScreenDevice}
           onOpenChange={(open) => {
             if (!open) setRemoteScreenDevice(null)
+          }}
+        />
+      )}
+
+      {cameraDevice && (
+        <CameraDialog
+          deviceId={cameraDevice._id}
+          deviceName={formatDeviceName(cameraDevice)}
+          open={!!cameraDevice}
+          onOpenChange={(open) => {
+            if (!open) setCameraDevice(null)
           }}
         />
       )}

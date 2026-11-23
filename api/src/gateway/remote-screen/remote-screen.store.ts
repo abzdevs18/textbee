@@ -9,6 +9,8 @@ export interface RemoteScreenSession {
   sessionId: string
   startedAt: number
   startedBy: string
+  /** Capability for the token-authenticated MJPEG stream of this session only. */
+  streamToken?: string
 }
 
 export interface RemoteScreenFrame {
@@ -17,6 +19,8 @@ export interface RemoteScreenFrame {
   height: number
   image: string
   capturedAt: number
+  /** Phone-side sequence number; lets parallel uploads land out of order safely. */
+  seq?: number
 }
 
 export interface RemoteScreenStatus {
@@ -60,7 +64,6 @@ export abstract class RemoteScreenStore {
   abstract drainCommands(deviceId: string): Promise<RemoteScreenCommand[]>
 }
 
-const key = (deviceId: string, part: string) => `remote-screen:${deviceId}:${part}`
 
 function parse<T>(raw: string | null): T | null {
   if (!raw) return null
@@ -76,8 +79,15 @@ export class RedisRemoteScreenStore
   extends RemoteScreenStore
   implements OnModuleDestroy
 {
-  constructor(private readonly redis: Redis) {
+  constructor(
+    private readonly redis: Redis,
+    private readonly prefix = 'remote-screen',
+  ) {
     super()
+  }
+
+  private key(deviceId: string, part: string) {
+    return `${this.prefix}:${deviceId}:${part}`
   }
 
   async onModuleDestroy() {
@@ -86,37 +96,37 @@ export class RedisRemoteScreenStore
 
   async getSession(deviceId: string) {
     return parse<RemoteScreenSession>(
-      await this.redis.get(key(deviceId, 'session')),
+      await this.redis.get(this.key(deviceId, 'session')),
     )
   }
 
   async setSession(deviceId: string, session: RemoteScreenSession, ttlMs: number) {
-    await this.redis.set(key(deviceId, 'session'), JSON.stringify(session), 'PX', ttlMs)
+    await this.redis.set(this.key(deviceId, 'session'), JSON.stringify(session), 'PX', ttlMs)
   }
 
   async clear(deviceId: string) {
     await this.redis.del(
-      key(deviceId, 'session'),
-      key(deviceId, 'frame'),
-      key(deviceId, 'status'),
-      key(deviceId, 'commands'),
+      this.key(deviceId, 'session'),
+      this.key(deviceId, 'frame'),
+      this.key(deviceId, 'status'),
+      this.key(deviceId, 'commands'),
     )
   }
 
   async setFrame(deviceId: string, frame: RemoteScreenFrame, ttlMs: number) {
-    await this.redis.set(key(deviceId, 'frame'), JSON.stringify(frame), 'PX', ttlMs)
+    await this.redis.set(this.key(deviceId, 'frame'), JSON.stringify(frame), 'PX', ttlMs)
   }
 
   async getFrame(deviceId: string) {
-    return parse<RemoteScreenFrame>(await this.redis.get(key(deviceId, 'frame')))
+    return parse<RemoteScreenFrame>(await this.redis.get(this.key(deviceId, 'frame')))
   }
 
   async setStatus(deviceId: string, status: RemoteScreenStatus, ttlMs: number) {
-    await this.redis.set(key(deviceId, 'status'), JSON.stringify(status), 'PX', ttlMs)
+    await this.redis.set(this.key(deviceId, 'status'), JSON.stringify(status), 'PX', ttlMs)
   }
 
   async getStatus(deviceId: string) {
-    return parse<RemoteScreenStatus>(await this.redis.get(key(deviceId, 'status')))
+    return parse<RemoteScreenStatus>(await this.redis.get(this.key(deviceId, 'status')))
   }
 
   async pushCommand(
@@ -125,7 +135,7 @@ export class RedisRemoteScreenStore
     maxQueued: number,
     ttlMs: number,
   ) {
-    const k = key(deviceId, 'commands')
+    const k = this.key(deviceId, 'commands')
     if ((await this.redis.llen(k)) >= maxQueued) return false
     await this.redis
       .multi()
@@ -136,7 +146,7 @@ export class RedisRemoteScreenStore
   }
 
   async drainCommands(deviceId: string) {
-    const k = key(deviceId, 'commands')
+    const k = this.key(deviceId, 'commands')
     const result = await this.redis.multi().lrange(k, 0, -1).del(k).exec()
     const raw = (result?.[0]?.[1] as string[] | undefined) ?? []
     return raw
@@ -147,6 +157,14 @@ export class RedisRemoteScreenStore
 
 /** Single-instance fallback (local dev / no REDIS_URL). */
 export class MemoryRemoteScreenStore extends RemoteScreenStore {
+  constructor(private readonly prefix = 'remote-screen') {
+    super()
+  }
+
+  private key(deviceId: string, part: string) {
+    return `${this.prefix}:${deviceId}:${part}`
+  }
+
   private readonly entries = new Map<string, { value: unknown; expiresAt: number }>()
 
   private read<T>(k: string): T | null {
@@ -164,32 +182,32 @@ export class MemoryRemoteScreenStore extends RemoteScreenStore {
   }
 
   async getSession(deviceId: string) {
-    return this.read<RemoteScreenSession>(key(deviceId, 'session'))
+    return this.read<RemoteScreenSession>(this.key(deviceId, 'session'))
   }
 
   async setSession(deviceId: string, session: RemoteScreenSession, ttlMs: number) {
-    this.write(key(deviceId, 'session'), session, ttlMs)
+    this.write(this.key(deviceId, 'session'), session, ttlMs)
   }
 
   async clear(deviceId: string) {
     for (const part of ['session', 'frame', 'status', 'commands'])
-      this.entries.delete(key(deviceId, part))
+      this.entries.delete(this.key(deviceId, part))
   }
 
   async setFrame(deviceId: string, frame: RemoteScreenFrame, ttlMs: number) {
-    this.write(key(deviceId, 'frame'), frame, ttlMs)
+    this.write(this.key(deviceId, 'frame'), frame, ttlMs)
   }
 
   async getFrame(deviceId: string) {
-    return this.read<RemoteScreenFrame>(key(deviceId, 'frame'))
+    return this.read<RemoteScreenFrame>(this.key(deviceId, 'frame'))
   }
 
   async setStatus(deviceId: string, status: RemoteScreenStatus, ttlMs: number) {
-    this.write(key(deviceId, 'status'), status, ttlMs)
+    this.write(this.key(deviceId, 'status'), status, ttlMs)
   }
 
   async getStatus(deviceId: string) {
-    return this.read<RemoteScreenStatus>(key(deviceId, 'status'))
+    return this.read<RemoteScreenStatus>(this.key(deviceId, 'status'))
   }
 
   async pushCommand(
@@ -198,7 +216,7 @@ export class MemoryRemoteScreenStore extends RemoteScreenStore {
     maxQueued: number,
     ttlMs: number,
   ) {
-    const k = key(deviceId, 'commands')
+    const k = this.key(deviceId, 'commands')
     const queue = this.read<RemoteScreenCommand[]>(k) ?? []
     if (queue.length >= maxQueued) return false
     this.write(k, [...queue, command], ttlMs)
@@ -206,20 +224,23 @@ export class MemoryRemoteScreenStore extends RemoteScreenStore {
   }
 
   async drainCommands(deviceId: string) {
-    const k = key(deviceId, 'commands')
+    const k = this.key(deviceId, 'commands')
     const queue = this.read<RemoteScreenCommand[]>(k) ?? []
     this.entries.delete(k)
     return queue
   }
 }
 
-export function createRemoteScreenStore(redisUrl?: string): RemoteScreenStore {
+export function createRemoteScreenStore(
+  redisUrl?: string,
+  prefix = 'remote-screen',
+): RemoteScreenStore {
   const logger = new Logger('RemoteScreenStore')
   if (!redisUrl) {
     logger.warn(
       'REDIS_URL is not set; remote screen state is in-memory and only works with a single API instance.',
     )
-    return new MemoryRemoteScreenStore()
+    return new MemoryRemoteScreenStore(prefix)
   }
   const redis = new Redis(redisUrl, {
     maxRetriesPerRequest: 2,
@@ -228,5 +249,5 @@ export function createRemoteScreenStore(redisUrl?: string): RemoteScreenStore {
   redis.on('error', (error) =>
     logger.warn(`Redis error: ${error?.message ?? error}`),
   )
-  return new RedisRemoteScreenStore(redis)
+  return new RedisRemoteScreenStore(redis, prefix)
 }

@@ -39,6 +39,30 @@ interface RemoteScreenApiService {
         @Query("sessionId") sessionId: String,
         @Query("wait") wait: Int = 1
     ): Response<RemoteScreenFrameResponse>
+
+    // Security camera: same protocol, its own session on the server.
+
+    @POST("gateway/devices/{deviceId}/remote-camera/frame")
+    suspend fun uploadCameraFrame(
+        @Path("deviceId") deviceId: String,
+        @Header("x-api-key") apiKey: String,
+        @Body body: RemoteScreenFrameRequest
+    ): Response<RemoteScreenFrameResponse>
+
+    @POST("gateway/devices/{deviceId}/remote-camera/status")
+    suspend fun reportCameraStatus(
+        @Path("deviceId") deviceId: String,
+        @Header("x-api-key") apiKey: String,
+        @Body body: RemoteScreenStatusRequest
+    ): Response<Any>
+
+    @GET("gateway/devices/{deviceId}/remote-camera/commands")
+    suspend fun pollCameraCommands(
+        @Path("deviceId") deviceId: String,
+        @Header("x-api-key") apiKey: String,
+        @Query("sessionId") sessionId: String,
+        @Query("wait") wait: Int = 1
+    ): Response<RemoteScreenFrameResponse>
 }
 
 /** Own client: the command long-poll outlives OkHttp's default 10s read timeout. */

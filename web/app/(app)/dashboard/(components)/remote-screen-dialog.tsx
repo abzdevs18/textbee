@@ -292,8 +292,8 @@ export default function RemoteScreenDialog({
           ? status?.message ?? 'The phone could not take screenshots.'
           : waitingTooLong
             ? outdatedApp
-              ? `This phone last reported app version ${appVersion?.name ?? appVersion?.code}. Remote Screen needs Gabay SMS 2.8.25 — install the update on the phone.`
-              : 'The phone has not answered yet. It may be offline, asleep with background activity restricted, or not yet updated to Gabay SMS 2.8.25.'
+              ? `This phone last reported app version ${appVersion?.name ?? appVersion?.code}. Remote Screen needs Gabay SMS 2.8.26 — install the update on the phone.`
+              : 'The phone has not answered yet. It may be offline, asleep with background activity restricted, or not yet updated to Gabay SMS 2.8.26.'
             : null
 
   return (

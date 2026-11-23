@@ -28,6 +28,10 @@ export type RemoteScreenCommand =
       durationMs: number
     }
   | { type: 'global'; action: RemoteScreenGlobalAction }
+  | { type: 'camera'; action: RemoteCameraAction }
+
+export const REMOTE_CAMERA_ACTIONS = ['switch', 'rotate'] as const
+export type RemoteCameraAction = (typeof REMOTE_CAMERA_ACTIONS)[number]
 
 export type RemoteScreenDeviceState =
   | 'starting'
@@ -38,6 +42,8 @@ export type RemoteScreenDeviceState =
   | 'streaming'
   /** Phone captures but its uploads are being rejected / failing. */
   | 'upload_failed'
+  /** Security camera mode is not switched on in the phone's app. */
+  | 'camera_off'
   | 'accessibility_disabled'
   | 'unsupported_android'
   | 'capture_failed'
@@ -49,6 +55,7 @@ export const REMOTE_SCREEN_DEVICE_STATES: RemoteScreenDeviceState[] = [
   'awaiting_consent',
   'streaming',
   'upload_failed',
+  'camera_off',
   'accessibility_disabled',
   'unsupported_android',
   'capture_failed',
@@ -67,6 +74,8 @@ export interface RemoteScreenFrameInput {
   height?: number
   /** Base64 JPEG (no data: prefix). */
   image?: string
+  /** Increasing per session; older frames arriving late are ignored. */
+  seq?: number
 }
 
 export interface RemoteScreenStatusInput {
@@ -152,12 +161,22 @@ export function parseRemoteScreenCommand(body: unknown): RemoteScreenCommand {
 export function parseRemoteScreenFrame(body: unknown): RemoteScreenFrameInput {
   const error = 'Invalid remote screen frame'
   const input = plainObject(body, error)
-  onlyFields(input, ['sessionId', 'width', 'height', 'image'], error)
+  onlyFields(input, ['sessionId', 'width', 'height', 'image', 'seq'], error)
+  let seq: number | undefined
+  if (input.seq !== undefined) {
+    if (
+      typeof input.seq !== 'number' ||
+      !Number.isSafeInteger(input.seq) ||
+      input.seq < 0
+    )
+      throw new BadRequestException(error)
+    seq = input.seq
+  }
   if (!isSessionId(input.sessionId)) throw new BadRequestException(error)
   if (input.image === undefined) {
     if (input.width !== undefined || input.height !== undefined)
       throw new BadRequestException(error)
-    return { sessionId: input.sessionId }
+    return { sessionId: input.sessionId, ...(seq !== undefined ? { seq } : {}) }
   }
   for (const size of [input.width, input.height]) {
     if (
@@ -184,7 +203,21 @@ export function parseRemoteScreenFrame(body: unknown): RemoteScreenFrameInput {
     width: input.width as number,
     height: input.height as number,
     image,
+    ...(seq !== undefined ? { seq } : {}),
   }
+}
+
+/** Camera viewer input: switch front/back, or rotate the picture 90°. */
+export function parseRemoteCameraCommand(body: unknown): RemoteScreenCommand {
+  const error = 'Invalid camera command'
+  const input = plainObject(body, error)
+  onlyFields(input, ['type', 'action'], error)
+  if (
+    input.type !== 'camera' ||
+    !REMOTE_CAMERA_ACTIONS.includes(input.action as RemoteCameraAction)
+  )
+    throw new BadRequestException(error)
+  return { type: 'camera', action: input.action as RemoteCameraAction }
 }
 
 export function parseRemoteScreenStatus(

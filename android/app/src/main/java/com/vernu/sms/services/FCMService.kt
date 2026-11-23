@@ -61,6 +61,16 @@ class FCMService : FirebaseMessagingService() {
                     RemoteScreen.handlePush(this, remoteMessage.data)
                     return
                 }
+                // Dashboard opened/closed the security-camera viewer for this phone
+                "remote_camera" -> {
+                    val target = remoteMessage.data["targetDeviceId"]
+                    val local = SharedPreferenceHelper.getSharedPreferenceString(
+                        this, AppConstants.SHARED_PREFS_DEVICE_ID_KEY, ""
+                    ) ?: ""
+                    if (target.isNullOrBlank() || target != local) return
+                    com.vernu.sms.remotescreen.SecurityCamera.handlePush(this, remoteMessage.data)
+                    return
+                }
                 "heartbeat_check" -> {
                     handleHeartbeatCheck()
                     return
