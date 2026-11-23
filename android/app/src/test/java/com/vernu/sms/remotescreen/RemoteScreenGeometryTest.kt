@@ -47,7 +47,8 @@ class RemoteScreenGeometryTest {
 
     @Test
     fun framesAreScaledToTheMaxEdge() {
-        assertEquals(432 to 960, RemoteScreenGeometry.scaledSize(1080, 2400))
-        assertEquals(720 to 900, RemoteScreenGeometry.scaledSize(720, 900))
+        assertEquals(324 to 720, RemoteScreenGeometry.scaledSize(1080, 2400))
+        assertEquals(576 to 720, RemoteScreenGeometry.scaledSize(720, 900))
+        assertEquals(360 to 640, RemoteScreenGeometry.scaledSize(360, 640))
     }
 }

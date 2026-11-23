@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Remote screen keeps the display on while a dashboard viewer is watching. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Android 10 remote screen: screen capture needs a mediaProjection foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Never granted at install. Granted once over ADB so the app can keep its
          Remote Screen service on and lift Android's SMS-count prompt by itself. -->
     <uses-permission
@@ -66,6 +68,17 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/remote_screen_accessibility_service" />
         </service>
+        <!-- Android 5–10 remote screen: asks for screen-capture permission. -->
+        <activity
+            android:name=".remotescreen.ProjectionPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service
+            android:name=".remotescreen.ProjectionForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
         <receiver
             android:name=".receivers.SMSBroadcastReceiver"
             android:exported="true">

@@ -26,6 +26,8 @@ import { formatError } from '@/lib/utils/errorHandler'
 type DeviceState =
   | 'starting'
   | 'connecting'
+  /** Android 10 and older: the phone is showing the screen-capture permission. */
+  | 'awaiting_consent'
   | 'streaming'
   | 'upload_failed'
   | 'accessibility_disabled'
@@ -50,7 +52,8 @@ type Command =
   | { type: 'swipe'; x1: number; y1: number; x2: number; y2: number; durationMs: number }
   | { type: 'global'; action: 'back' | 'home' | 'recents' | 'notifications' }
 
-const POLL_MS = 700
+/** Back-off after a failed poll; successful polls re-request immediately. */
+const RETRY_MS = 1000
 /** A frame older than this means the phone stopped uploading. */
 const STALE_MS = 6000
 const SWIPE_MIN_PX = 12
@@ -82,6 +85,7 @@ export default function RemoteScreenDialog({
   const [now, setNow] = useState(Date.now())
   const sinceRef = useRef<number | undefined>(undefined)
   const lastStatusAt = useRef<number | undefined>(undefined)
+  const lastSeenStatusAt = useRef<number | undefined>(undefined)
   const sessionIdRef = useRef<string | null>(null)
   const lastStartAt = useRef(0)
   const [appVersion, setAppVersion] = useState<{
@@ -89,6 +93,9 @@ export default function RemoteScreenDialog({
     name: string | null
   } | null>(null)
   const pointerStart = useRef<{ x: number; y: number; t: number } | null>(null)
+  const [taps, setTaps] = useState<{ id: number; x: number; y: number }[]>([])
+  const frameTimes = useRef<number[]>([])
+  const [fps, setFps] = useState(0)
   const imgRef = useRef<HTMLImageElement>(null)
 
   const start = useCallback(async () => {
@@ -121,6 +128,8 @@ export default function RemoteScreenDialog({
     setAliveAt(null)
     setOpenedAt(Date.now())
     lastStatusAt.current = undefined
+    lastSeenStatusAt.current = undefined
+    frameTimes.current = []
     void start()
     return () => {
       // Scoped to our own session so a late close can't end a newer one.
@@ -139,13 +148,21 @@ export default function RemoteScreenDialog({
     let cancelled = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
+      let delay = 0
       try {
+        // Long-poll: answered as soon as the phone uploads a new frame.
         const res = await httpBrowserClient.get(
-          ApiEndpoints.gateway.remoteScreen(deviceId, sinceRef.current),
+          ApiEndpoints.gateway.remoteScreen(
+            deviceId,
+            sinceRef.current,
+            lastSeenStatusAt.current,
+          ),
+          { timeout: 20000 },
         )
         const view: RemoteScreenView = res.data?.data
         if (cancelled) return
         setStatus(view?.status ?? null)
+        lastSeenStatusAt.current = view?.status?.at
         // Every phone upload (even "screen unchanged") refreshes status.at.
         if (
           view?.status?.state === 'streaming' &&
@@ -157,7 +174,10 @@ export default function RemoteScreenDialog({
         if (view?.frame?.image) {
           sinceRef.current = view.frame.capturedAt
           setImage(`data:image/jpeg;base64,${view.frame.image}`)
+          const t = Date.now()
+          frameTimes.current = [...frameTimes.current.filter((x) => t - x < 5000), t]
         }
+        if (view && !view.active) delay = RETRY_MS
         if (view && !view.active && view.status?.state === 'stopped') {
           setError(view.status.message ?? 'The session ended')
           return
@@ -172,8 +192,9 @@ export default function RemoteScreenDialog({
         }
       } catch {
         // Transient; keep polling.
+        delay = RETRY_MS
       }
-      if (!cancelled) timer = setTimeout(poll, POLL_MS)
+      if (!cancelled) timer = setTimeout(poll, delay)
     }
     void poll()
     return () => {
@@ -184,7 +205,11 @@ export default function RemoteScreenDialog({
 
   useEffect(() => {
     if (!open) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
+    const id = setInterval(() => {
+      const t = Date.now()
+      setNow(t)
+      setFps(frameTimes.current.filter((x) => t - x < 5000).length / 5)
+    }, 1000)
     return () => clearInterval(id)
   }, [open])
 
@@ -228,6 +253,10 @@ export default function RemoteScreenDialog({
     if (!a || !b) return
     const moved = Math.hypot(b.px - a.px, b.py - a.py)
     if (moved < SWIPE_MIN_PX) {
+      // Instant local feedback; the phone's frame follows a moment later.
+      const id = Date.now()
+      setTaps((list) => [...list, { id, x: a.x, y: a.y }])
+      setTimeout(() => setTaps((list) => list.filter((tap) => tap.id !== id)), 700)
       void send({ type: 'tap', x: a.x, y: a.y })
     } else {
       void send({
@@ -251,18 +280,20 @@ export default function RemoteScreenDialog({
     appVersion?.code != null && appVersion.code < MIN_APP_VERSION_CODE
 
   const problem =
-    state === 'upload_failed'
+    state === 'awaiting_consent'
+      ? 'The phone is asking for screen-capture permission. Someone at the phone must tap “Start now” once — tick “Don’t show again” first (Android 9 and older) so it never asks again.'
+      : state === 'upload_failed'
       ? `The phone is capturing its screen but cannot upload it${status?.message ? ` (${status.message})` : ''}. Check its internet connection.`
       : state === 'accessibility_disabled'
       ? 'Remote screen is turned off on the phone. On the phone open Gabay SMS → Settings → Remote Screen and turn on “Gabay SMS remote screen”.'
       : state === 'unsupported_android'
-        ? status?.message ?? 'This phone runs an Android version older than 11, which cannot share its screen this way.'
+        ? status?.message ?? 'This phone’s Android version cannot share its screen.'
         : state === 'capture_failed'
           ? status?.message ?? 'The phone could not take screenshots.'
           : waitingTooLong
             ? outdatedApp
-              ? `This phone last reported app version ${appVersion?.name ?? appVersion?.code}. Remote Screen needs Gabay SMS 2.8.24 — install the update on the phone.`
-              : 'The phone has not answered yet. It may be offline, asleep with background activity restricted, or not yet updated to Gabay SMS 2.8.24.'
+              ? `This phone last reported app version ${appVersion?.name ?? appVersion?.code}. Remote Screen needs Gabay SMS 2.8.25 — install the update on the phone.`
+              : 'The phone has not answered yet. It may be offline, asleep with background activity restricted, or not yet updated to Gabay SMS 2.8.25.'
             : null
 
   return (
@@ -300,17 +331,26 @@ export default function RemoteScreenDialog({
 
         <div className='relative mx-auto flex min-h-[320px] w-full items-center justify-center overflow-hidden rounded-lg border bg-black'>
           {image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              ref={imgRef}
-              src={image}
-              alt={`Screen of ${deviceName}`}
-              draggable={false}
-              onPointerDown={onPointerDown}
-              onPointerUp={onPointerUp}
-              onPointerLeave={() => (pointerStart.current = null)}
-              className={`max-h-[65vh] w-auto cursor-pointer select-none touch-none ${stale ? 'opacity-60' : ''}`}
-            />
+            <div className='relative inline-block'>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                ref={imgRef}
+                src={image}
+                alt={`Screen of ${deviceName}`}
+                draggable={false}
+                onPointerDown={onPointerDown}
+                onPointerUp={onPointerUp}
+                onPointerLeave={() => (pointerStart.current = null)}
+                className={`block max-h-[65vh] w-auto cursor-pointer select-none touch-none ${stale ? 'opacity-60' : ''}`}
+              />
+              {taps.map((tap) => (
+                <span
+                  key={tap.id}
+                  className='pointer-events-none absolute h-8 w-8 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full bg-emerald-400/70'
+                  style={{ left: `${tap.x * 100}%`, top: `${tap.y * 100}%` }}
+                />
+              ))}
+            </div>
           ) : (
             <div className='flex flex-col items-center gap-2 p-6 text-center text-xs text-white/70'>
               <Loader2 className='h-5 w-5 animate-spin' />
@@ -318,12 +358,19 @@ export default function RemoteScreenDialog({
                 ? 'Waking the phone…'
                 : state === 'connecting'
                   ? 'Phone received the request — capturing the screen…'
+                  : state === 'awaiting_consent'
+                    ? 'Waiting for screen-capture permission on the phone…'
                   : 'Waiting for the phone to answer…'}
             </div>
           )}
           {pendingInput && (
             <div className='absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white'>
               Sending…
+            </div>
+          )}
+          {image && !stale && fps > 0 && (
+            <div className='absolute bottom-2 right-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white'>
+              {fps.toFixed(1)} fps
             </div>
           )}
         </div>

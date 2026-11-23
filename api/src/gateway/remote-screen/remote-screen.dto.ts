@@ -33,6 +33,8 @@ export type RemoteScreenDeviceState =
   | 'starting'
   /** Phone received the push and is starting capture. */
   | 'connecting'
+  /** Android 10 and older: the phone shows the screen-capture permission prompt. */
+  | 'awaiting_consent'
   | 'streaming'
   /** Phone captures but its uploads are being rejected / failing. */
   | 'upload_failed'
@@ -44,6 +46,7 @@ export type RemoteScreenDeviceState =
 export const REMOTE_SCREEN_DEVICE_STATES: RemoteScreenDeviceState[] = [
   'starting',
   'connecting',
+  'awaiting_consent',
   'streaming',
   'upload_failed',
   'accessibility_disabled',

@@ -4,9 +4,6 @@ import com.vernu.sms.dtos.GatewayStatsResponse
 import com.vernu.sms.dtos.MessagesResponse
 import com.vernu.sms.dtos.RegisterDeviceInputDTO
 import com.vernu.sms.dtos.RegisterDeviceResponseDTO
-import com.vernu.sms.dtos.RemoteScreenFrameRequest
-import com.vernu.sms.dtos.RemoteScreenFrameResponse
-import com.vernu.sms.dtos.RemoteScreenStatusRequest
 import com.vernu.sms.dtos.SendSmsRequest
 import com.vernu.sms.dtos.SubscriptionResponse
 import com.vernu.sms.dtos.UserProfileWrapper
@@ -57,19 +54,5 @@ interface GatewayApiServiceKt {
         @Path("deviceId") deviceId: String,
         @Header("x-api-key") apiKey: String,
         @Body body: SendSmsRequest
-    ): Response<Any>
-
-    @POST("gateway/devices/{deviceId}/remote-screen/frame")
-    suspend fun uploadRemoteScreenFrame(
-        @Path("deviceId") deviceId: String,
-        @Header("x-api-key") apiKey: String,
-        @Body body: RemoteScreenFrameRequest
-    ): Response<RemoteScreenFrameResponse>
-
-    @POST("gateway/devices/{deviceId}/remote-screen/status")
-    suspend fun reportRemoteScreenStatus(
-        @Path("deviceId") deviceId: String,
-        @Header("x-api-key") apiKey: String,
-        @Body body: RemoteScreenStatusRequest
     ): Response<Any>
 }

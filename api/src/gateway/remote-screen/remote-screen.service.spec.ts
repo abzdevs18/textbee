@@ -147,6 +147,42 @@ describe('RemoteScreenService', () => {
     )
   })
 
+  it('long-poll view returns as soon as the phone uploads a frame', async () => {
+    const { sessionId } = await service.start(DEVICE, 'owner')
+    const first = await service.view(DEVICE)
+    const started = Date.now()
+    const pending = service.view(DEVICE, undefined, first.status!.at, 5000)
+    setTimeout(
+      () => void service.acceptFrame(DEVICE, { sessionId, width: 100, height: 100, image: JPEG }),
+      150,
+    )
+    const view = await pending
+    expect(view.frame?.image).toBe(JPEG)
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+
+  it('long-poll view gives up after the wait when nothing changes', async () => {
+    await service.start(DEVICE, 'owner')
+    const first = await service.view(DEVICE)
+    const started = Date.now()
+    const view = await service.view(DEVICE, undefined, first.status!.at, 300)
+    expect(view.frame).toBeNull()
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250)
+  })
+
+  it('phone command long-poll delivers a tap immediately and ends with the session', async () => {
+    const { sessionId } = await service.start(DEVICE, 'owner')
+    const pending = service.pollCommands(DEVICE, sessionId, 5000)
+    setTimeout(() => void service.queueCommand(DEVICE, { type: 'tap', x: 0.2, y: 0.3 }), 100)
+    expect(await pending).toEqual({ active: true, commands: [{ type: 'tap', x: 0.2, y: 0.3 }] })
+    expect(await service.pollCommands(DEVICE, 'f'.repeat(32), 5000)).toEqual({
+      active: false,
+      commands: [],
+    })
+    await service.stop(DEVICE)
+    expect((await service.pollCommands(DEVICE, sessionId, 5000)).active).toBe(false)
+  })
+
   it('caps queued input', async () => {
     await service.start(DEVICE, 'owner')
     for (let i = 0; i < 20; i++)
@@ -236,7 +272,9 @@ describe('RemoteScreenController boundary', () => {
     const controller = new RemoteScreenController(service as never)
     const apiKeyRequest = { apiKey: { _id: 'k' }, user: { _id: 'owner' } }
     await expect(controller.start(DEVICE, apiKeyRequest)).rejects.toThrow('dashboard login')
-    await expect(controller.view(DEVICE, undefined, apiKeyRequest)).rejects.toThrow(
+    await expect(
+      controller.view(DEVICE, undefined, undefined, undefined, apiKeyRequest),
+    ).rejects.toThrow(
       'dashboard login',
     )
     await expect(

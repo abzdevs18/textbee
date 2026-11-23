@@ -37,10 +37,13 @@ export const ApiEndpoints = {
       sessionId
         ? `/gateway/devices/${id}/remote-screen/session?sessionId=${sessionId}`
         : `/gateway/devices/${id}/remote-screen/session`,
-    remoteScreen: (id: string, since?: number) =>
-      since
-        ? `/gateway/devices/${id}/remote-screen?since=${since}`
-        : `/gateway/devices/${id}/remote-screen`,
+    remoteScreen: (id: string, since?: number, statusAt?: number) => {
+      // wait=1: the API holds the request until a new frame/status exists.
+      const params = new URLSearchParams({ wait: '1' })
+      if (since) params.set('since', String(since))
+      if (statusAt) params.set('statusAt', String(statusAt))
+      return `/gateway/devices/${id}/remote-screen?${params}`
+    },
     remoteScreenInput: (id: string) =>
       `/gateway/devices/${id}/remote-screen/input`,
     listAccountMessages: () => '/gateway/messages',

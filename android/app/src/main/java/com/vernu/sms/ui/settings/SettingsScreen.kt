@@ -282,9 +282,11 @@ fun SettingsScreen(
                 title = "Remote Screen",
                 subtitle = when {
                     !RemoteScreen.isSupported() ->
-                        "Needs Android 11 or newer"
+                        "Not available on this Android version"
                     remoteScreenEnabled && systemSetupGranted ->
                         "On — kept on automatically (ADB setup done)"
+                    remoteScreenEnabled && RemoteScreen.needsCaptureConsent() ->
+                        "On — on first use, tap \"Start now\" with \"Don't show again\" ticked"
                     remoteScreenEnabled ->
                         "On — the dashboard can view this screen and tap prompts like \"Allow\""
                     else ->

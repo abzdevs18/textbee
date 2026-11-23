@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import com.vernu.sms.ApiManagerKt
 import com.vernu.sms.AppConstants
 import com.vernu.sms.dtos.RemoteScreenCommand
 import com.vernu.sms.dtos.RemoteScreenStatusRequest
@@ -25,8 +24,16 @@ object RemoteScreen {
     private const val TAG = "RemoteScreen"
     private val SESSION_ID = Regex("^[a-f0-9]{32}$")
 
-    /** AccessibilityService.takeScreenshot needs Android 11. */
-    fun isSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+    /**
+     * Android 11+ captures silently via accessibility screenshots; Android 5–10
+     * use screen-capture (MediaProjection) instead. Taps need Android 7+.
+     */
+    fun isSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+
+    fun canTap(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+
+    /** Android 10 and older ask "Start now" for screen capture. */
+    fun needsCaptureConsent(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.R
 
     fun isServiceEnabled(context: Context): Boolean {
         val enabled = Settings.Secure.getString(
@@ -52,17 +59,16 @@ object RemoteScreen {
         when (data["action"]) {
             "start" -> {
                 if (!isSupported()) {
-                    reportStatus(
+                    reportStatusBlocking(
                         context, sessionId, "unsupported_android",
-                        "Android ${Build.VERSION.RELEASE} — remote screen needs Android 11 or newer"
+                        "Android ${Build.VERSION.RELEASE} is too old for remote screen"
                     )
                     return
                 }
-                // Lets the dashboard tell "push never arrived" from "arrived but failing".
-                reportStatus(context, sessionId, "connecting")
+                // The session itself reports "connecting" without delaying the first frame.
                 val service = RemoteScreenService.instance ?: awaitSelfEnabledService(context)
                 if (service == null) {
-                    reportStatus(
+                    reportStatusBlocking(
                         context, sessionId, "accessibility_disabled",
                         if (GatewaySystemSetup.hasSecureSettingsGrant(context))
                             "Android did not start the remote screen service; restart the phone once"
@@ -90,18 +96,20 @@ object RemoteScreen {
         return RemoteScreenService.instance
     }
 
-    /** Blocking; FCM gives us a background thread and ~10s. */
-    fun reportStatus(context: Context, sessionId: String, state: String, message: String? = null) {
+    /** Blocking; for the FCM thread and other non-coroutine callers. */
+    fun reportStatusBlocking(context: Context, sessionId: String, state: String, message: String? = null) {
+        runBlocking { reportStatusAsync(context, sessionId, state, message) }
+    }
+
+    suspend fun reportStatusAsync(context: Context, sessionId: String, state: String, message: String? = null) {
         val (deviceId, apiKey) = credentials(context) ?: return
-        runBlocking {
-            withTimeoutOrNull(8_000) {
-                try {
-                    ApiManagerKt.getApiService().reportRemoteScreenStatus(
-                        deviceId, apiKey, RemoteScreenStatusRequest(sessionId, state, message)
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not report remote screen status $state: ${e.message}")
-                }
+        withTimeoutOrNull(8_000) {
+            try {
+                RemoteScreenApi.get().reportStatus(
+                    deviceId, apiKey, RemoteScreenStatusRequest(sessionId, state, message)
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not report remote screen status $state: ${e.message}")
             }
         }
     }
@@ -155,8 +163,8 @@ object RemoteScreenGeometry {
         }
     }
 
-    /** Longest edge of an uploaded frame; enough to read and tap a dialog. */
-    const val MAX_FRAME_EDGE = 960
+    /** Longest edge of an uploaded frame; enough to read and tap a dialog, small enough to stream. */
+    const val MAX_FRAME_EDGE = 720
 
     fun scaledSize(width: Int, height: Int, maxEdge: Int = MAX_FRAME_EDGE): Pair<Int, Int> {
         val longest = maxOf(width, height)

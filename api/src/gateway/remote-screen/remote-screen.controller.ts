@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -13,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
+import { Throttle } from '@nestjs/throttler'
 import { AuthGuard } from '../../auth/guards/auth.guard'
 import { CanModifyDevice } from '../guards/can-modify-device.guard'
 import {
@@ -20,7 +22,16 @@ import {
   parseRemoteScreenFrame,
   parseRemoteScreenStatus,
 } from './remote-screen.dto'
-import { RemoteScreenService } from './remote-screen.service'
+import {
+  REMOTE_SCREEN_MAX_WAIT_MS,
+  RemoteScreenService,
+} from './remote-screen.service'
+
+function toNumber(value: string | undefined) {
+  if (!value) return undefined
+  const n = Number(value)
+  return Number.isFinite(n) ? n : undefined
+}
 
 /**
  * Live view + remote taps for a gateway phone, so an operator can answer
@@ -35,6 +46,9 @@ import { RemoteScreenService } from './remote-screen.service'
 @ApiBearerAuth()
 @Controller('gateway/devices/:id/remote-screen')
 @UseGuards(AuthGuard, CanModifyDevice)
+// A live view is a few requests per second from the phone and the viewer,
+// often behind the same school NAT; the global 500/min would cut it off.
+@Throttle({ default: { limit: 3000, ttl: 60000 } })
 export class RemoteScreenController {
   constructor(private readonly remoteScreen: RemoteScreenService) {}
 
@@ -77,13 +91,33 @@ export class RemoteScreenController {
   async view(
     @Param('id') deviceId: string,
     @Query('since') since: string | undefined,
+    @Query('statusAt') statusAt: string | undefined,
+    @Query('wait') wait: string | undefined,
     @Request() req,
   ) {
     this.requireDashboardLogin(req)
-    const sinceNumber = since ? Number(since) : undefined
     const data = await this.remoteScreen.view(
       deviceId,
-      Number.isFinite(sinceNumber) ? sinceNumber : undefined,
+      toNumber(since),
+      toNumber(statusAt),
+      wait ? REMOTE_SCREEN_MAX_WAIT_MS : 0,
+    )
+    return { data }
+  }
+
+  @ApiOperation({ summary: 'Phone: wait for viewer taps (long-poll)' })
+  @Get('/commands')
+  async commands(
+    @Param('id') deviceId: string,
+    @Query('sessionId') sessionId: string | undefined,
+    @Query('wait') wait: string | undefined,
+  ) {
+    if (typeof sessionId !== 'string' || !/^[a-f0-9]{32}$/.test(sessionId))
+      throw new BadRequestException('Invalid session id')
+    const data = await this.remoteScreen.pollCommands(
+      deviceId,
+      sessionId,
+      wait ? REMOTE_SCREEN_MAX_WAIT_MS : 0,
     )
     return { data }
   }

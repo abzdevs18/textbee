@@ -32,6 +32,11 @@ export const REMOTE_SCREEN_FRAME_TTL_MS = 15_000
 export const REMOTE_SCREEN_STATUS_TTL_MS = 60_000
 export const REMOTE_SCREEN_COMMAND_TTL_MS = 15_000
 export const REMOTE_SCREEN_MAX_QUEUED_COMMANDS = 20
+/** Long-poll: hold a request open this long waiting for something new. */
+export const REMOTE_SCREEN_MAX_WAIT_MS = 8_000
+const LONG_POLL_STEP_MS = 100
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export interface RemoteScreenView {
   active: boolean
@@ -116,10 +121,30 @@ export class RemoteScreenService {
   }
 
   /**
-   * Viewer poll. Keeps the session alive and returns the latest frame, unless
-   * the viewer already has it (`sinceCapturedAt`).
+   * Viewer poll. With `waitMs`, holds the request until there is a frame newer
+   * than `sinceCapturedAt` or a status newer than `sinceStatusAt` (or the wait
+   * runs out), so frames reach the viewer as soon as the phone uploads them.
    */
-  async view(deviceId: string, sinceCapturedAt?: number): Promise<RemoteScreenView> {
+  async view(
+    deviceId: string,
+    sinceCapturedAt?: number,
+    sinceStatusAt?: number,
+    waitMs = 0,
+  ): Promise<RemoteScreenView> {
+    const deadline = Date.now() + Math.min(Math.max(waitMs, 0), REMOTE_SCREEN_MAX_WAIT_MS)
+    for (;;) {
+      const result = await this.viewOnce(deviceId, sinceCapturedAt)
+      if (!result.active || Date.now() >= deadline) return result
+      if (result.frame?.image) return result
+      if (result.status && result.status.at !== sinceStatusAt) return result
+      await sleep(LONG_POLL_STEP_MS)
+    }
+  }
+
+  private async viewOnce(
+    deviceId: string,
+    sinceCapturedAt?: number,
+  ): Promise<RemoteScreenView> {
     const session = await this.store.getSession(deviceId)
     if (!session)
       return { active: false, sessionId: null, startedAt: null, status: null, frame: null }
@@ -177,6 +202,23 @@ export class RemoteScreenService {
         HttpStatus.TOO_MANY_REQUESTS,
       )
     return { queued: true }
+  }
+
+  /**
+   * Phone: wait (long-poll) for viewer input, so a tap reaches the phone
+   * immediately instead of riding on the next frame upload.
+   */
+  async pollCommands(deviceId: string, sessionId: string, waitMs = 0) {
+    const deadline = Date.now() + Math.min(Math.max(waitMs, 0), REMOTE_SCREEN_MAX_WAIT_MS)
+    for (;;) {
+      const session = await this.store.getSession(deviceId)
+      if (!session || session.sessionId !== sessionId)
+        return { active: false, commands: [] as RemoteScreenCommand[] }
+      const commands = await this.store.drainCommands(deviceId)
+      if (commands.length || Date.now() >= deadline)
+        return { active: true, commands }
+      await sleep(LONG_POLL_STEP_MS)
+    }
   }
 
   /**
