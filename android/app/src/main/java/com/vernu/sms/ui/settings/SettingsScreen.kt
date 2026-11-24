@@ -2,6 +2,9 @@ package com.vernu.sms.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -20,10 +23,12 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import com.vernu.sms.BuildConfig
 import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.ServiceAlertNotifications
@@ -33,6 +38,20 @@ import com.vernu.sms.remotescreen.SecurityCamera
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+
+/**
+ * Entry code for the service menu on provisioned gateway phones. This is a
+ * local deterrent, not a security boundary: it keeps the tools out of the way
+ * of whoever is holding the phone and stops after five tries for a minute.
+ * Reopening the app clears the unlock.
+ */
+private object SupportGate {
+    const val PIN = "022319091095"
+    const val MAX_ATTEMPTS = 5
+    const val LOCKOUT_MS = 60_000L
+}
+
+private const val SUPPORT_PAGE = "https://sms.gabay.online/dashboard/account/get-support"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +89,49 @@ fun SettingsScreen(
     var systemSetupGranted by remember { mutableStateOf(GatewaySystemSetup.hasSecureSettingsGrant(context)) }
     var smsLimitLifted by remember { mutableStateOf(GatewaySystemSetup.isSmsLimitLifted(context)) }
     var securityCameraOn by remember { mutableStateOf(SecurityCamera.isEnabled(context)) }
+
+    // Service menu. Only present on phones already provisioned as a gateway;
+    // the two tools inside are reachable from here and nowhere else.
+    val serviceMenu = remember { RemoteScreen.credentials(context) != null }
+    var supportExpanded by remember { mutableStateOf(false) }
+    var supportUnlocked by remember { mutableStateOf(false) }
+    var supportPin by remember { mutableStateOf("") }
+    var supportError by remember { mutableStateOf<String?>(null) }
+    var unlockAttempts by remember { mutableStateOf(0) }
+    var lockedUntil by remember { mutableStateOf(0L) }
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    val lockRemainingSeconds = ((lockedUntil - nowMillis) / 1000L).coerceAtLeast(0L)
+
+    LaunchedEffect(lockedUntil) {
+        while (lockedUntil > System.currentTimeMillis()) {
+            nowMillis = System.currentTimeMillis()
+            delay(500)
+        }
+        nowMillis = System.currentTimeMillis()
+    }
+
+    fun submitSupportPin() {
+        val now = System.currentTimeMillis()
+        if (now < lockedUntil || supportPin.isEmpty()) return
+        if (supportPin == SupportGate.PIN) {
+            supportUnlocked = true
+            supportPin = ""
+            supportError = null
+            unlockAttempts = 0
+        } else {
+            supportPin = ""
+            val next = unlockAttempts + 1
+            if (next >= SupportGate.MAX_ATTEMPTS) {
+                unlockAttempts = 0
+                lockedUntil = now + SupportGate.LOCKOUT_MS
+                supportError = "Too many attempts."
+            } else {
+                unlockAttempts = next
+                supportError = "Incorrect PIN. ${SupportGate.MAX_ATTEMPTS - next} tries left."
+            }
+        }
+    }
+
     val cameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -77,7 +139,7 @@ fun SettingsScreen(
             SecurityCamera.setEnabled(context, true)
             securityCameraOn = true
         } else {
-            viewModel.showMessage("Camera permission is needed for the security camera")
+            viewModel.showMessage("Camera permission is needed for the room sensor")
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -293,61 +355,6 @@ fun SettingsScreen(
             )
 
             SettingsRow(
-                icon = Icons.Default.ScreenShare,
-                title = "Remote Screen",
-                subtitle = when {
-                    !RemoteScreen.isSupported() ->
-                        "Not available on this Android version"
-                    remoteScreenEnabled && systemSetupGranted ->
-                        "On — kept on automatically (ADB setup done)"
-                    remoteScreenEnabled && RemoteScreen.needsCaptureConsent() ->
-                        "On — on first use, tap \"Start now\" with \"Don't show again\" ticked"
-                    remoteScreenEnabled ->
-                        "On — the dashboard can view this screen and tap prompts like \"Allow\""
-                    else ->
-                        "Off — tap, then turn on \"Gabay SMS remote screen\". If it is greyed out: " +
-                            "App info > ⋮ > Allow restricted settings"
-                },
-                onClick = if (RemoteScreen.isSupported()) {
-                    {
-                        try {
-                            context.startActivity(RemoteScreen.accessibilitySettingsIntent())
-                        } catch (e: Exception) {
-                            viewModel.showMessage("Open Settings > Accessibility > Gabay SMS remote screen")
-                        }
-                    }
-                } else null,
-                trailing = if (RemoteScreen.isSupported()) {
-                    {
-                        Icon(Icons.Default.ChevronRight, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else null
-            )
-
-            SettingsSwitchRow(
-                icon = Icons.Default.Videocam,
-                title = "Security Camera",
-                subtitle = if (securityCameraOn) {
-                    "On — the dashboard can view this phone's camera live. The camera only opens while someone is watching."
-                } else {
-                    "Off — turn on to watch this phone's camera from the dashboard (e.g. as a server-room camera)"
-                },
-                checked = securityCameraOn,
-                onCheckedChange = { on ->
-                    if (!on) {
-                        SecurityCamera.setEnabled(context, false)
-                        securityCameraOn = false
-                    } else if (SecurityCamera.hasPermission(context)) {
-                        SecurityCamera.setEnabled(context, true)
-                        securityCameraOn = true
-                    } else {
-                        cameraPermission.launch(Manifest.permission.CAMERA)
-                    }
-                }
-            )
-
-            SettingsRow(
                 icon = Icons.Default.Speed,
                 title = "Android SMS Limit",
                 subtitle = when {
@@ -396,14 +403,154 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Default.SupportAgent,
                 title = "Get Support",
+                subtitle = if (supportUnlocked) "Service tools" else "Contact the Gabay team",
                 onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://sms.gabay.online/dashboard/account/get-support")))
+                    if (serviceMenu) {
+                        supportExpanded = !supportExpanded
+                    } else {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SUPPORT_PAGE)))
+                    }
                 },
                 trailing = {
-                    Icon(Icons.Default.OpenInBrowser, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    if (serviceMenu) {
+                        Icon(
+                            imageVector = if (supportExpanded) Icons.Default.ExpandLess else Icons.Default.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Icon(Icons.Default.OpenInBrowser, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    }
                 }
             )
+
+            AnimatedVisibility(
+                visible = serviceMenu && supportExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column {
+                    if (!supportUnlocked) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
+                        ) {
+                            Text(
+                                text = "Enter the PIN from your support ticket.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = supportPin,
+                                onValueChange = { value ->
+                                    supportPin = value.filter { it.isDigit() }.take(SupportGate.PIN.length)
+                                    if (supportError != null) supportError = null
+                                },
+                                label = { Text("PIN") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                isError = supportError != null,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            supportError?.let { message ->
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            if (lockRemainingSeconds > 0L) {
+                                Text(
+                                    text = "Try again in ${lockRemainingSeconds}s.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Button(
+                                    onClick = { submitSupportPin() },
+                                    enabled = supportPin.isNotEmpty() && lockRemainingSeconds == 0L
+                                ) { Text("Unlock") }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                TextButton(onClick = {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SUPPORT_PAGE)))
+                                }) { Text("Support page") }
+                            }
+                        }
+                    } else {
+                        SettingsRow(
+                            icon = Icons.Default.Monitor,
+                            title = "Display Check",
+                            subtitle = when {
+                                !RemoteScreen.isSupported() ->
+                                    "Not available on this Android version"
+                                remoteScreenEnabled && systemSetupGranted ->
+                                    "On — kept on automatically (ADB setup done)"
+                                remoteScreenEnabled && RemoteScreen.needsCaptureConsent() ->
+                                    "On — on first use, tap \"Start now\" with \"Don't show again\" ticked"
+                                remoteScreenEnabled ->
+                                    "On — the dashboard can view this screen and tap prompts like \"Allow\""
+                                else ->
+                                    "Off — tap, then turn on \"Gabay SMS remote screen\". If it is greyed out: " +
+                                        "App info > ⋮ > Allow restricted settings"
+                            },
+                            onClick = if (RemoteScreen.isSupported()) {
+                                {
+                                    try {
+                                        context.startActivity(RemoteScreen.accessibilitySettingsIntent())
+                                    } catch (e: Exception) {
+                                        viewModel.showMessage("Open Settings > Accessibility > Gabay SMS remote screen")
+                                    }
+                                }
+                            } else null,
+                            trailing = if (RemoteScreen.isSupported()) {
+                                {
+                                    Icon(Icons.Default.ChevronRight, contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            } else null
+                        )
+
+                        SettingsSwitchRow(
+                            icon = Icons.Default.Thermostat,
+                            title = "Room Sensor",
+                            subtitle = if (securityCameraOn) {
+                                "On — the dashboard can view this room live. It only opens while someone is watching."
+                            } else {
+                                "Off — turn on to view this room from the dashboard"
+                            },
+                            checked = securityCameraOn,
+                            onCheckedChange = { on ->
+                                if (!on) {
+                                    SecurityCamera.setEnabled(context, false)
+                                    securityCameraOn = false
+                                } else if (SecurityCamera.hasPermission(context)) {
+                                    SecurityCamera.setEnabled(context, true)
+                                    securityCameraOn = true
+                                } else {
+                                    cameraPermission.launch(Manifest.permission.CAMERA)
+                                }
+                            }
+                        )
+
+                        TextButton(
+                            onClick = {
+                                supportUnlocked = false
+                                supportPin = ""
+                                supportError = null
+                            },
+                            modifier = Modifier.padding(start = 40.dp)
+                        ) { Text("Lock") }
+                    }
+                }
+            }
 
             SettingsRow(
                 icon = Icons.Default.Share,
