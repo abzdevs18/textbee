@@ -70,6 +70,10 @@ object MessageStatusMapper {
             "Retrying", StatusTone.WARNING,
             localError ?: "This phone could not send it; the server will retry"
         )
+        LocalState.UNKNOWN -> StatusView(
+            "No confirmation", StatusTone.WARNING,
+            localError ?: "The phone never confirmed this SMS. Check the phone's Messages app before resending."
+        )
         LocalState.EXPIRED -> StatusView("Expired", StatusTone.NEUTRAL, "Not sent within 2 hours")
         // Handed back to the server (its lease ran out before this phone could
         // start it); shows like any SMS the phone does not hold.

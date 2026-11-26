@@ -24,14 +24,20 @@ import { WebhookEvent } from '../webhook/webhook-event.enum'
 import { WebhookService } from '../webhook/webhook.service'
 import { BillingService } from '../billing/billing.service'
 import { SmsQueueService } from './queue/sms-queue.service'
-import { SmsOutboxService } from './sms-outbox.service'
 import {
+  SmsOutboxService,
+  getActiveDeviceCooldown,
+} from './sms-outbox.service'
+import {
+  DEVICE_ALL_SIMS_PAUSED_COOLDOWN_MINUTES,
   DEVICE_FAILURE_COOLDOWN_MINUTES,
   DEVICE_FAILURE_THRESHOLD,
   DEVICE_FAILED_SEND_STATUSES,
   DEVICE_IN_FLIGHT_STATUSES,
   DEVICE_MAX_IN_FLIGHT,
   RESENDABLE_BLOCKED_STATUSES,
+  SMS_ERROR_ALL_SIMS_PAUSED,
+  SMS_ERROR_CONFIRM_TIMEOUT,
   SMS_MAX_ATTEMPTS,
 } from './sms-delivery.constants'
 
@@ -519,10 +525,14 @@ export class GatewayService {
     if (input.fcmToken) {
       deviceData.fcmTokenUpdatedAt = now
     }
-    // Invalidation bookkeeping is server-owned. updateDevice lifts it with an
-    // explicit $unset when the handset presents a token.
+    // Invalidation & send-cooldown bookkeeping are server-owned. updateDevice
+    // lifts token invalidation with an explicit $unset when the handset presents a token.
     delete deviceData.fcmTokenInvalidatedAt
     delete deviceData.fcmTokenInvalidReason
+    delete deviceData.recentSendFailures
+    delete deviceData.sendCooldownUntil
+    delete deviceData.sendCooldownReason
+    delete deviceData.failureWindowResetAt
 
     if (device) {
       // Same app install re-registering: update its row rather than adding a
@@ -631,9 +641,13 @@ export class GatewayService {
     if (tokenChanged) {
       updateData.fcmTokenUpdatedAt = now
     }
-    // Never let a client payload write the invalidation bookkeeping directly.
+    // Never let a client payload write server-owned invalidation or cooldown bookkeeping directly.
     delete updateData.fcmTokenInvalidatedAt
     delete updateData.fcmTokenInvalidReason
+    delete updateData.recentSendFailures
+    delete updateData.sendCooldownUntil
+    delete updateData.sendCooldownReason
+    delete updateData.failureWindowResetAt
 
     const updateOps: any = { $set: updateData }
     if (tokenChanged || (tokenProvided && device.fcmTokenInvalidatedAt)) {
@@ -2084,20 +2098,25 @@ export class GatewayService {
       reportedAttempt > 0 &&
       reportedAttempt < (Number(sms.attemptCount) || 0)
 
-    // A stale device reporting failure must not disturb the attempt that now
+    // A stale device reporting failure/unknown must not disturb the attempt that now
     // owns the SMS — only remember that this device could not send it.
-    if (normalizedStatus === 'failed' && (!ownsSms || staleAttempt)) {
+    if (
+      (normalizedStatus === 'failed' || normalizedStatus === 'unknown') &&
+      (!ownsSms || staleAttempt)
+    ) {
       await this.smsModel.findByIdAndUpdate(dto.smsId, {
         // Excluding the *owning* device for its own superseded attempt would
         // also bar it from the newer attempt (single-phone setups would then
-        // have no sender at all), so only exclude a previous owner.
-        ...(!ownsSms && {
-          $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
-        }),
+        // have no sender at all), so only exclude a previous owner on failure.
+        ...(!ownsSms &&
+          normalizedStatus === 'failed' && {
+            $addToSet: { excludedDeviceIds: new Types.ObjectId(deviceId) },
+          }),
         $set: {
           'metadata.staleDeviceFailure': {
             at: new Date(),
             deviceId,
+            status: normalizedStatus,
             ...(Number.isFinite(reportedAttempt) && { attempt: reportedAttempt }),
             errorCode: dto.errorCode,
             errorMessage: dto.errorMessage,
@@ -2107,20 +2126,34 @@ export class GatewayService {
       return {
         success: true,
         message:
-          'Failure recorded for a superseded attempt or previous device; current attempt untouched',
+          normalizedStatus === 'unknown'
+            ? 'Unknown status recorded for a superseded attempt or previous device; current attempt untouched'
+            : 'Failure recorded for a superseded attempt or previous device; current attempt untouched',
+        ignored: true,
+      }
+    }
+
+    // Duplicate UNKNOWN reports are idempotent and must not double-count device failure strikes.
+    if (normalizedStatus === 'unknown' && currentStatus === 'unknown') {
+      return {
+        success: true,
+        message: 'SMS already unknown; ignoring duplicate status',
         ignored: true,
       }
     }
 
     // A failure after the handset already reported SENT (a late multipart part
     // from older clients) must not re-send: the recipient already has it.
-    // A repeated failure for an SMS that is already failed changes nothing.
+    // A repeated failure for an SMS that is already failed or unknown changes nothing.
     // A failure for an SMS that is back in the outbox (`pending`) belongs to
     // an attempt that was already handled — no phone holds a pending SMS — and
     // re-running failover would re-exclude the only phone mid-backoff.
     if (
       normalizedStatus === 'failed' &&
-      (currentStatus === 'sent' || currentStatus === 'failed' || currentStatus === 'pending')
+      (currentStatus === 'sent' ||
+        currentStatus === 'failed' ||
+        currentStatus === 'pending' ||
+        currentStatus === 'unknown')
     ) {
       await this.smsModel.findByIdAndUpdate(dto.smsId, {
         $set: {
@@ -2218,11 +2251,29 @@ export class GatewayService {
       if (!sms.sentAt) {
         updateData.sentAt = new Date(dto.deliveredAtInMillis || Date.now())
       }
+    } else if (normalizedStatus === 'unknown') {
+      updateData.failedAt = dto.failedAtInMillis
+        ? new Date(dto.failedAtInMillis)
+        : new Date()
+      updateData.errorCode = dto.errorCode || SMS_ERROR_CONFIRM_TIMEOUT
+      updateData.errorMessage =
+        dto.errorMessage ||
+        'No network confirmation from handset; not auto-resending to avoid duplicates'
     }
 
     const updateOps: any = { $set: updateData }
-    if (['sent', 'delivered'].includes(normalizedStatus)) {
-      updateOps.$unset = { leasedUntil: '', leasedAt: '', nextAttemptAt: '' }
+    if (['sent', 'delivered', 'unknown'].includes(normalizedStatus)) {
+      updateOps.$unset = {
+        leasedUntil: '',
+        leasedAt: '',
+        nextAttemptAt: '',
+        ...(currentStatus === 'unknown' &&
+          ['sent', 'delivered'].includes(normalizedStatus) && {
+            errorCode: '',
+            errorMessage: '',
+            failedAt: '',
+          }),
+      }
     }
 
     const updatedSms = await this.smsModel.findByIdAndUpdate(
@@ -2233,16 +2284,24 @@ export class GatewayService {
 
     if (dto.smsBatchId) {
       const allSmsInBatch = await this.smsModel.find({ smsBatch: dto.smsBatchId })
-      const allHaveSameStatus = allSmsInBatch.every(
-        (row) => String(row.status).toLowerCase() === normalizedStatus,
-      )
+      const allHaveSameStatus =
+        allSmsInBatch.length > 0 &&
+        allSmsInBatch.every(
+          (row) => String(row.status).toLowerCase() === normalizedStatus,
+        )
 
       if (allHaveSameStatus) {
         const smsBatchStatus =
-          normalizedStatus === 'failed' ? 'failed' : 'completed'
+          normalizedStatus === 'failed'
+            ? 'failed'
+            : normalizedStatus === 'unknown'
+              ? 'unknown'
+              : 'completed'
         await this.smsBatchModel.findByIdAndUpdate(dto.smsBatchId, {
           $set: { status: smsBatchStatus },
         })
+      } else if (normalizedStatus === 'unknown') {
+        await this.refreshBatchStatusFromMessages(dto.smsBatchId)
       }
     }
 
@@ -2273,8 +2332,19 @@ export class GatewayService {
       console.error('Failed to trigger webhook event:', error)
     }
 
-    // Free capacity — wake outbox for more work
+    // Update device health & wake outbox for freed capacity
     if (['sent', 'delivered'].includes(normalizedStatus)) {
+      await this.smsOutboxService
+        .recordDeviceSendSuccess?.(deviceId)
+        ?.catch(() => undefined)
+      this.smsOutboxService.dispatchWaitingOutbox(10).catch(() => undefined)
+    } else if (normalizedStatus === 'unknown') {
+      await this.smsOutboxService
+        .recordDeviceSendFailure?.(
+          deviceId,
+          dto.errorCode || SMS_ERROR_CONFIRM_TIMEOUT,
+        )
+        ?.catch(() => undefined)
       this.smsOutboxService.dispatchWaitingOutbox(10).catch(() => undefined)
     }
 
@@ -2494,14 +2564,51 @@ export class GatewayService {
       }
     }
 
-    // Update device with all changes. Invalidation must be lifted with $unset:
-    // Mongoose 9 strips `$set: { field: undefined }`.
+    // Manage ALL_SIMS_PAUSED cooldown from heartbeat without letting routine
+    // legacy heartbeats clear a still-paused device prematurely.
+    const activeCooldown = getActiveDeviceCooldown(device, now.getTime())
+    let clearSendCooldown = false
+    if (input.allSimsPaused === true) {
+      updateData.sendCooldownUntil = new Date(
+        now.getTime() + DEVICE_ALL_SIMS_PAUSED_COOLDOWN_MINUTES * 60 * 1000,
+      )
+      updateData.sendCooldownReason = SMS_ERROR_ALL_SIMS_PAUSED
+    } else if (
+      input.allSimsPaused === false &&
+      activeCooldown.active &&
+      activeCooldown.reason === SMS_ERROR_ALL_SIMS_PAUSED
+    ) {
+      clearSendCooldown = true
+      updateData.recentSendFailures = []
+      updateData.failureWindowResetAt = now
+    } else if (
+      input.allSimsPaused === undefined &&
+      activeCooldown.active &&
+      activeCooldown.reason === SMS_ERROR_ALL_SIMS_PAUSED &&
+      input.deviceUptimeMillis !== undefined &&
+      typeof device.deviceUptimeInfo?.uptimeMillis === 'number' &&
+      input.deviceUptimeMillis < device.deviceUptimeInfo.uptimeMillis
+    ) {
+      // Handset rebooted (uptime reset), clearing Android's in-memory SIM pause state.
+      clearSendCooldown = true
+      updateData.recentSendFailures = []
+      updateData.failureWindowResetAt = now
+    }
+
+    // Update device with all changes. Invalidation and cooldown must be lifted
+    // with $unset: Mongoose 9 strips `$set: { field: undefined }`.
     const heartbeatUpdate: any = { $set: updateData }
+    const unsetData: Record<string, ''> = {}
     if (clearTokenInvalidation) {
-      heartbeatUpdate.$unset = {
-        fcmTokenInvalidatedAt: '',
-        fcmTokenInvalidReason: '',
-      }
+      unsetData.fcmTokenInvalidatedAt = ''
+      unsetData.fcmTokenInvalidReason = ''
+    }
+    if (clearSendCooldown) {
+      unsetData.sendCooldownUntil = ''
+      unsetData.sendCooldownReason = ''
+    }
+    if (Object.keys(unsetData).length > 0) {
+      heartbeatUpdate.$unset = unsetData
     }
     await this.deviceModel.findByIdAndUpdate(deviceId, heartbeatUpdate)
 

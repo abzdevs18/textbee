@@ -128,6 +128,10 @@ object OutboxSync {
         ) ?: ""
         if (deviceId.isBlank() || apiKey.isBlank()) return ClaimResult.Skipped
         if (!GatewayConfigSync.isGatewayEnabled(context)) return ClaimResult.Skipped
+        if (SimRotationManager.areAllSimsPaused(context)) {
+            Log.d(TAG, "Skipping claim-outbox ($reason) — all SIMs are paused")
+            return ClaimResult.Skipped
+        }
 
         return try {
             val request = ClaimOutboxRequest().apply {

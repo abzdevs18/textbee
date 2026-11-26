@@ -114,6 +114,9 @@ object HeartbeatHelper {
                     AppConstants.DEFAULT_SMS_SEND_DELAY_SECONDS
                 )
             }
+            // Lets the server extend or clear ALL_SIMS_PAUSED cooldowns accurately
+            // (e.g. clearing cooldown after an app restart or toggling Alternate SIM off).
+            heartbeatInput.allSimsPaused = SimRotationManager.areAllSimsPaused(context)
 
             // SIM info
             heartbeatInput.simInfo = SimInfoCollectionDTO().apply {
@@ -147,7 +150,7 @@ object HeartbeatHelper {
                 // FCM-independent pull path: every heartbeat proves this device has
                 // network, so claim (and resync) whatever is waiting right here
                 // instead of relying on a push that may never arrive.
-                if (GatewayConfigSync.isGatewayEnabled(context)) {
+                if (GatewayConfigSync.isGatewayEnabled(context) && !SimRotationManager.areAllSimsPaused(context)) {
                     try {
                         // Falls back to OutboxClaimWorker by itself if the pull fails.
                         OutboxSync.claimAndDispatch(context, "heartbeat")

@@ -33,6 +33,11 @@ object SmsDispatcher {
     private val background: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "gabay-sms-dispatch").apply { isDaemon = true }
     }
+    // Dedicated single-thread executor for SMSStatusReceiver (goAsync(), 10s limit) so
+    // radio callbacks never queue behind kick()'s blocking WorkManager queries.
+    private val statusCallbacks: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "gabay-sms-status-cb").apply { isDaemon = true }
+    }
 
     @Volatile
     private var lastPruneAtMs = 0L
@@ -58,6 +63,18 @@ object SmsDispatcher {
                 block()
             } catch (e: Exception) {
                 Log.e(TAG, "Background outbox task failed: ${e.message}", e)
+            }
+        }
+    }
+
+    /** Runs radio status callbacks off the main thread without contending with kick() queries. */
+    @JvmStatic
+    fun runStatusCallback(block: () -> Unit) {
+        statusCallbacks.execute {
+            try {
+                block()
+            } catch (e: Exception) {
+                Log.e(TAG, "SMS status callback failed: ${e.message}", e)
             }
         }
     }
@@ -121,7 +138,8 @@ object SmsDispatcher {
                 AcceptResult.AlreadyQueued, AcceptResult.InFlight, AcceptResult.Stale -> duplicates++
                 is AcceptResult.Rereport -> {
                     rereported++
-                    StatusReporter.reportFinal(app, result.entry)
+                    // Replace any deferred status job so resync breaks Doze/OEM KEEP deadlocks.
+                    StatusReporter.reportFinal(app, result.entry, replace = true)
                 }
             }
         }
@@ -146,9 +164,26 @@ object SmsDispatcher {
         try {
             val store = OutboxStore.get(app)
             while (true) {
-                val entry = store.nextQueued() ?: return DispatchOutcome.Idle
                 val now = System.currentTimeMillis()
                 val elapsed = SystemClock.elapsedRealtime()
+                val rotationEnabled = SimRotationManager.isEnabled(app)
+
+                // Reconcile timed-out / partial-confirmed in-flight sends BEFORE checking
+                // nextQueued(), so the last SMS in a batch never hangs until the 2m poll.
+                val nextInFlightCheckMs = if (rotationEnabled) {
+                    reconcileInFlightTimeouts(app, store, now)
+                } else {
+                    null
+                }
+
+                val entry = store.nextQueued()
+                if (entry == null) {
+                    return if (nextInFlightCheckMs != null) {
+                        DispatchOutcome.Wait(nextInFlightCheckMs)
+                    } else {
+                        DispatchOutcome.Idle
+                    }
+                }
 
                 // Past its lease the server may already have given it to another
                 // phone: never start it here; a re-issue (newer attempt) requeues it.
@@ -169,17 +204,14 @@ object SmsDispatcher {
                     continue
                 }
 
-                if (!SimRotationManager.isEnabled(app)) {
+                if (!rotationEnabled) {
                     val waitMs = pacingWaitMs(app, now)
                     if (waitMs > 0) return DispatchOutcome.Wait(waitMs)
                     submit(app, store, entry, now)
                     continue
                 }
 
-                val decision = SimRotationManager.decide(app, now) { localId, sendSeq ->
-                    SimRotationPolicy.timeoutOutcome(store.get(localId), sendSeq)
-                }
-                when (decision) {
+                when (val decision = SimRotationManager.decideNext(app, now, nextInFlightCheckMs)) {
                     // Rotation waits are never longer than one confirmation timeout; a bad value must not park the queue.
                     is SimDecision.Wait -> return DispatchOutcome.Wait(
                         decision.delayMs.coerceIn(1, SimRotationPolicy.CONFIRM_TIMEOUT_MS)
@@ -195,7 +227,7 @@ object SmsDispatcher {
                         )?.let { StatusReporter.reportFinal(app, it) }
                         MessageSyncNotifier.notifyChanged(app)
                     }
-                    is SimDecision.TimedOut -> Unit // resolved inside decide()
+                    is SimDecision.TimedOut -> continue // reconciled on the next iteration
                 }
             }
         } finally {
@@ -222,15 +254,73 @@ object SmsDispatcher {
         runInBackground { pump(app) }
     }
 
-    /** Ensures a dispatch worker will run if anything is queued. Cheap; call freely. */
+    /** Ensures a dispatch worker will run if anything is queued or awaiting confirmation. */
     @JvmStatic
-    fun kick(context: Context) {
+    @JvmOverloads
+    fun kick(context: Context, replaceWaiting: Boolean = false) {
         val app = context.applicationContext
         runInBackground {
-            if (OutboxStore.get(app).countQueued() > 0) {
-                SmsDispatchWorker.enqueue(app)
+            val hasWork = OutboxStore.get(app).countQueued() > 0 ||
+                (SimRotationManager.isEnabled(app) && SimRotationManager.hasInFlight(app))
+            if (hasWork) {
+                SmsDispatchWorker.enqueue(app, replaceWaiting = replaceWaiting)
+            } else if (replaceWaiting) {
+                SmsDispatchWorker.cancel(app)
             }
         }
+    }
+
+    /**
+     * Reconciles any timed-out or partial-confirmed in-flight sends against [OutboxStore]
+     * and reports them to the server so server in-flight slots never leak for 10–20 minutes.
+     */
+    private fun reconcileInFlightTimeouts(
+        context: Context,
+        store: OutboxStore,
+        now: Long
+    ): Long? {
+        val check = SimRotationManager.resolveExpiredInFlight(context, now) { localId ->
+            store.get(localId)
+        }
+        for (resolved in check.resolved) {
+            when (resolved.kind) {
+                InFlightTimeoutKind.ALREADY_FINISHED,
+                InFlightTimeoutKind.NONE -> Unit
+                InFlightTimeoutKind.PARTIAL_CONFIRMED -> {
+                    store.finishTimedOut(
+                        resolved.localId, resolved.sendSeq, LocalState.SENT,
+                        null, null, now
+                    )?.let {
+                        Log.i(TAG, "Multipart SMS ${it.localId} finalized as SENT after partial-confirmation grace")
+                        StatusReporter.reportFinal(context, it)
+                        MessageSyncNotifier.notifyChanged(context)
+                    }
+                }
+                InFlightTimeoutKind.PARTIAL_FAILED -> {
+                    store.finishTimedOut(
+                        resolved.localId, resolved.sendSeq, LocalState.FAILED,
+                        null, "One or more SMS parts failed before remaining parts confirmed", now
+                    )?.let {
+                        Log.w(TAG, "Multipart SMS ${it.localId} finalized as FAILED after partial-failure timeout")
+                        StatusReporter.reportFinal(context, it)
+                        MessageSyncNotifier.notifyChanged(context)
+                    }
+                }
+                InFlightTimeoutKind.UNCONFIRMED -> {
+                    store.finishTimedOut(
+                        resolved.localId, resolved.sendSeq, LocalState.UNKNOWN,
+                        StatusReporter.ERROR_CONFIRM_TIMEOUT,
+                        "No network confirmation from radio within ${SimRotationPolicy.CONFIRM_TIMEOUT_MS / 1000}s",
+                        now
+                    )?.let {
+                        Log.w(TAG, "SMS ${it.localId} finalized as UNKNOWN after ${SimRotationPolicy.CONFIRM_TIMEOUT_MS / 1000}s without radio confirmation")
+                        StatusReporter.reportFinal(context, it)
+                        MessageSyncNotifier.notifyChanged(context)
+                    }
+                }
+            }
+        }
+        return check.nextCheckDelayMs
     }
 
     private fun refusalFor(

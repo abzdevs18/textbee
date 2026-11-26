@@ -86,7 +86,7 @@ class SMSStatusReceiver : BroadcastReceiver() {
         val code = resultCode
         val app = context.applicationContext
         val pending = goAsync()
-        SmsDispatcher.runInBackground {
+        SmsDispatcher.runStatusCallback {
             try {
                 handle(app, intent, code)
             } finally {

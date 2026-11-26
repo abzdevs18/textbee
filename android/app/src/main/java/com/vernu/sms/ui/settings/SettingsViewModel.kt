@@ -19,6 +19,7 @@ import com.vernu.sms.helpers.GatewayReliability
 import com.vernu.sms.helpers.HeartbeatManager
 import com.vernu.sms.helpers.SharedPreferenceHelper
 import com.vernu.sms.outbox.SimRotationManager
+import com.vernu.sms.outbox.SmsDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -110,7 +111,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         )
 
         val sims = try {
-            TextBeeUtils.getAvailableSimSlots(context).map { info ->
+            TextBeeUtils.getUsableSimSlots(context).map { info ->
                 SimOption(
                     subscriptionId = info.subscriptionId,
                     displayName = "${info.carrierName} (SIM ${info.simSlotIndex + 1})"
@@ -194,8 +195,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         SharedPreferenceHelper.setSharedPreferenceBoolean(
             context, AppConstants.SHARED_PREFS_SIM_ROTATION_ENABLED_KEY, enabled
         )
+        SimRotationManager.resetForToggle(context)
         _state.update { it.copy(isSimRotationEnabled = enabled) }
-        // The pace the server sizes leases from changes with the mode.
+        // Clear any delayed dispatch run from the previous mode and resume immediately.
+        SmsDispatcher.kick(context, replaceWaiting = true)
+        // The pace and SIM-paused status the server routes from change with the mode.
         if (_state.value.deviceId.isNotEmpty()) HeartbeatManager.triggerHeartbeat(context)
     }
 

@@ -17,5 +17,6 @@ class HeartbeatInputDTO {
     var locale: String? = null
     var receiveSMSEnabled: Boolean? = null
     var smsSendDelaySeconds: Int? = null
+    var allSimsPaused: Boolean? = null
     var simInfo: SimInfoCollectionDTO? = null
 }

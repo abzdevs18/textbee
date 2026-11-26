@@ -254,7 +254,7 @@ fun SettingsScreen(
             SettingsSwitchRow(
                 icon = Icons.Default.SwapHoriz,
                 title = "Alternate SIMs",
-                subtitle = "SIM 1 → SIM 2 → SIM 1 … waiting 20s per SIM after the network confirms. " +
+                subtitle = "SIM 1 → SIM 2 → SIM 1 … 10s apart (20s per SIM). " +
                     "A SIM that fails 5 SMS in a row is paused until the app restarts.",
                 checked = state.isSimRotationEnabled,
                 onCheckedChange = { viewModel.setSimRotation(it) }

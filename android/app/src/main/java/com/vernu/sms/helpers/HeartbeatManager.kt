@@ -79,6 +79,7 @@ object HeartbeatManager {
 
         val heartbeatWork = OneTimeWorkRequest.Builder(HeartbeatWorker::class.java)
             .setConstraints(constraints)
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag(AppConstants.HEARTBEAT_WORK_TAG)
             .build()
 

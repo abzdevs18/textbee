@@ -17,10 +17,12 @@ object StatusReporter {
     const val ERROR_INVALID_RECIPIENT = "INVALID_RECIPIENT"
     const val ERROR_SENDING_EXCEPTION = "SENDING_EXCEPTION"
     const val ERROR_ALL_SIMS_PAUSED = "ALL_SIMS_PAUSED"
+    const val ERROR_CONFIRM_TIMEOUT = "CONFIRM_TIMEOUT"
 
-    /** Reports the final state of an entry (SENT, DELIVERED, FAILED or EXPIRED). */
+    /** Reports the final state of an entry (SENT, DELIVERED, FAILED, UNKNOWN or EXPIRED). */
     @JvmStatic
-    fun reportFinal(context: Context, entry: OutboxEntry) {
+    @JvmOverloads
+    fun reportFinal(context: Context, entry: OutboxEntry, replace: Boolean = false) {
         val now = System.currentTimeMillis()
         val at = entry.completedAtMs ?: now
         val dto = SMSDTO().apply {
@@ -43,6 +45,13 @@ object StatusReporter {
                 dto.errorCode = entry.errorCode ?: ERROR_SENDING_EXCEPTION
                 dto.errorMessage = entry.errorMessage ?: "SMS could not be sent from this phone"
             }
+            LocalState.UNKNOWN -> {
+                dto.status = "UNKNOWN"
+                dto.failedAtInMillis = at
+                dto.errorCode = entry.errorCode ?: ERROR_CONFIRM_TIMEOUT
+                dto.errorMessage = entry.errorMessage
+                    ?: "No network confirmation from radio within 60s"
+            }
             LocalState.EXPIRED -> {
                 dto.status = "FAILED"
                 dto.failedAtInMillis = at
@@ -52,7 +61,7 @@ object StatusReporter {
             }
             else -> return
         }
-        enqueue(context, dto)
+        enqueue(context, dto, replace = replace)
     }
 
     /** Delivery receipt problems are informational; the API maps them onto sent/delivered. */
@@ -90,7 +99,8 @@ object StatusReporter {
     }
 
     @JvmStatic
-    fun enqueue(context: Context, dto: SMSDTO) {
+    @JvmOverloads
+    fun enqueue(context: Context, dto: SMSDTO, replace: Boolean = false) {
         val deviceId = SharedPreferenceHelper.getSharedPreferenceString(
             context, AppConstants.SHARED_PREFS_DEVICE_ID_KEY, ""
         ) ?: ""
@@ -101,6 +111,6 @@ object StatusReporter {
             Log.e(TAG, "Cannot report SMS status: device not registered or SMS id missing")
             return
         }
-        SMSStatusUpdateWorker.enqueueWork(context, deviceId, apiKey, dto)
+        SMSStatusUpdateWorker.enqueueWork(context, deviceId, apiKey, dto, replace = replace)
     }
 }

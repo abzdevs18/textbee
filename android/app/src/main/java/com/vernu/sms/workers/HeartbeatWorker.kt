@@ -2,23 +2,29 @@ package com.vernu.sms.workers
 
 import android.content.Context
 import android.util.Log
-import androidx.work.Worker
+import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.vernu.sms.AppConstants
 import com.vernu.sms.helpers.HeartbeatHelper
 import com.vernu.sms.helpers.SharedPreferenceHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-class HeartbeatWorker(context: Context, workerParams: WorkerParameters) : Worker(context, workerParams) {
+class HeartbeatWorker(context: Context, workerParams: WorkerParameters) : CoroutineWorker(context, workerParams) {
     companion object {
         private const val TAG = "HeartbeatWorker"
     }
 
-    override fun doWork(): Result {
+    override suspend fun getForegroundInfo(): ForegroundInfo =
+        SmsDispatchWorker.foregroundInfo(applicationContext)
+
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val context = applicationContext
 
         if (!HeartbeatHelper.isDeviceEligibleForHeartbeat(context)) {
             Log.d(TAG, "Device not eligible for heartbeat, skipping")
-            return Result.success()
+            return@withContext Result.success()
         }
 
         val deviceId = SharedPreferenceHelper.getSharedPreferenceString(
@@ -28,7 +34,7 @@ class HeartbeatWorker(context: Context, workerParams: WorkerParameters) : Worker
             context, AppConstants.SHARED_PREFS_API_KEY_KEY, ""
         ) ?: ""
 
-        return if (HeartbeatHelper.sendHeartbeat(context, deviceId, apiKey)) {
+        if (HeartbeatHelper.sendHeartbeat(context, deviceId, apiKey)) {
             Result.success()
         } else {
             Log.e(TAG, "Failed to send heartbeat, will retry")

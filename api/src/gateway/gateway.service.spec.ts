@@ -103,6 +103,8 @@ describe('GatewayService', () => {
     notifyWorkAvailable: jest.fn().mockResolvedValue(undefined),
     dispatchWaitingOutbox: jest.fn().mockResolvedValue(0),
     countWaitingOutbox: jest.fn().mockResolvedValue(0),
+    recordDeviceSendFailure: jest.fn().mockResolvedValue({ cooledDown: false }),
+    recordDeviceSendSuccess: jest.fn().mockResolvedValue(undefined),
     getDeviceHealthSummary: jest.fn().mockResolvedValue({
       inFlight: 0,
       recentFailures: 0,
@@ -1298,6 +1300,92 @@ describe('GatewayService', () => {
       const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
       expect(update.$unset).toBeUndefined()
     })
+
+    it('should extend ALL_SIMS_PAUSED cooldown when heartbeat reports allSimsPaused=true', async () => {
+      await service.heartbeat(mockDeviceId, { allSimsPaused: true })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$set.sendCooldownReason).toBe('ALL_SIMS_PAUSED')
+      expect(update.$set.sendCooldownUntil).toBeInstanceOf(Date)
+      expect(update.$set.sendCooldownUntil.getTime()).toBeGreaterThan(Date.now())
+      expect(update.$unset).toBeUndefined()
+    })
+
+    it('should clear ALL_SIMS_PAUSED cooldown when heartbeat reports allSimsPaused=false', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+        sendCooldownUntil: new Date(Date.now() + 4 * 60 * 1000),
+        sendCooldownReason: 'ALL_SIMS_PAUSED',
+      })
+
+      await service.heartbeat(mockDeviceId, { allSimsPaused: false })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toEqual({
+        sendCooldownUntil: '',
+        sendCooldownReason: '',
+      })
+      expect(update.$set.recentSendFailures).toEqual([])
+      expect(update.$set.failureWindowResetAt).toBeInstanceOf(Date)
+    })
+
+    it('should NOT clear ALL_SIMS_PAUSED cooldown on a routine legacy heartbeat without reboot', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+        deviceUptimeInfo: { uptimeMillis: 100_000 },
+        sendCooldownUntil: new Date(Date.now() + 4 * 60 * 1000),
+        sendCooldownReason: 'ALL_SIMS_PAUSED',
+      })
+
+      await service.heartbeat(mockDeviceId, { deviceUptimeMillis: 200_000 })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toBeUndefined()
+    })
+
+    it('should clear ALL_SIMS_PAUSED cooldown on a legacy heartbeat when uptime proves a reboot', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+        deviceUptimeInfo: { uptimeMillis: 500_000 },
+        sendCooldownUntil: new Date(Date.now() + 4 * 60 * 1000),
+        sendCooldownReason: 'ALL_SIMS_PAUSED',
+      })
+
+      await service.heartbeat(mockDeviceId, { deviceUptimeMillis: 10_000 })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toEqual({
+        sendCooldownUntil: '',
+        sendCooldownReason: '',
+      })
+      expect(update.$set.recentSendFailures).toEqual([])
+      expect(update.$set.failureWindowResetAt).toBeInstanceOf(Date)
+    })
+
+    it('should NOT clear a FAILURE_THRESHOLD cooldown when allSimsPaused=false', async () => {
+      mockDeviceModel.findById.mockResolvedValue({
+        _id: mockDeviceId,
+        user: 'user123',
+        enabled: true,
+        fcmToken: 'token123',
+        sendCooldownUntil: new Date(Date.now() + 4 * 60 * 1000),
+        sendCooldownReason: 'FAILURE_THRESHOLD',
+      })
+
+      await service.heartbeat(mockDeviceId, { allSimsPaused: false })
+
+      const [, update] = mockDeviceModel.findByIdAndUpdate.mock.calls[0]
+      expect(update.$unset).toBeUndefined()
+    })
   })
 
   describe('hard delete message history', () => {
@@ -1604,6 +1692,162 @@ describe('GatewayService', () => {
           failover: expect.objectContaining({ status: 'pending' }),
         }),
       )
+    })
+
+    it('should handle UNKNOWN confirmation timeout by releasing lease, triggering refill, recording failure strike, and NOT failing over', async () => {
+      const failedAtInMillis = Date.now()
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: deviceId,
+        attemptCount: 1,
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+      mockSmsModel.findByIdAndUpdate = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'unknown',
+        errorCode: 'CONFIRM_TIMEOUT',
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'UNKNOWN',
+        attempt: 1,
+        errorCode: 'CONFIRM_TIMEOUT',
+        errorMessage: 'No network confirmation from radio within 60s',
+        failedAtInMillis,
+      } as any)
+
+      expect(result).toEqual(
+        expect.objectContaining({ success: true, message: 'SMS status updated successfully' }),
+      )
+      expect(mockSmsOutboxService.handleSendFailureAndFailover).not.toHaveBeenCalled()
+      expect(mockSmsModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        'sms123',
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: 'unknown',
+            errorCode: 'CONFIRM_TIMEOUT',
+            errorMessage: 'No network confirmation from radio within 60s',
+            failedAt: new Date(failedAtInMillis),
+          }),
+          $unset: {
+            leasedUntil: '',
+            leasedAt: '',
+            nextAttemptAt: '',
+          },
+        }),
+        { new: true },
+      )
+      expect(mockSmsOutboxService.recordDeviceSendFailure).toHaveBeenCalledWith(
+        deviceId,
+        'CONFIRM_TIMEOUT',
+      )
+      expect(mockSmsOutboxService.dispatchWaitingOutbox).toHaveBeenCalledWith(10)
+      expect(mockWebhookService.deliverNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ event: WebhookEvent.UNKNOWN_STATE }),
+      )
+    })
+
+    it('should ignore duplicate UNKNOWN status idempotently without double-counting failure strikes', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'unknown',
+        device: deviceId,
+        attemptCount: 1,
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'UNKNOWN',
+        attempt: 1,
+        errorCode: 'CONFIRM_TIMEOUT',
+      } as any)
+
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
+      expect(mockSmsModel.findByIdAndUpdate).not.toHaveBeenCalled()
+      expect(mockSmsOutboxService.recordDeviceSendFailure).not.toHaveBeenCalled()
+      expect(mockSmsOutboxService.dispatchWaitingOutbox).not.toHaveBeenCalled()
+    })
+
+    it('should fence a superseded attempt UNKNOWN report without disturbing the active attempt', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'dispatched',
+        device: deviceId,
+        attemptCount: 2,
+        metadata: { dispatchAttempts: [{ deviceId }, { deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'UNKNOWN',
+        attempt: 1,
+        errorCode: 'CONFIRM_TIMEOUT',
+      } as any)
+
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
+      expect(mockSmsOutboxService.recordDeviceSendFailure).not.toHaveBeenCalled()
+      expect(mockSmsOutboxService.dispatchWaitingOutbox).not.toHaveBeenCalled()
+    })
+
+    it('should upgrade UNKNOWN to SENT on late confirmation and clear device cooldown/strikes', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'unknown',
+        device: deviceId,
+        attemptCount: 1,
+        errorCode: 'CONFIRM_TIMEOUT',
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'SENT',
+        attempt: 1,
+        sentAtInMillis: Date.now(),
+      } as any)
+
+      expect(result).toEqual(expect.objectContaining({ success: true }))
+      expect(mockSmsModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        'sms123',
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: 'sent' }),
+          $unset: expect.objectContaining({
+            leasedUntil: '',
+            leasedAt: '',
+            nextAttemptAt: '',
+            errorCode: '',
+            errorMessage: '',
+            failedAt: '',
+          }),
+        }),
+        { new: true },
+      )
+      expect(mockSmsOutboxService.recordDeviceSendSuccess).toHaveBeenCalledWith(
+        deviceId,
+      )
+      expect(mockSmsOutboxService.dispatchWaitingOutbox).toHaveBeenCalledWith(10)
+    })
+
+    it('should not fail over a late FAILED report after SMS is already UNKNOWN', async () => {
+      mockSmsModel.findById = jest.fn().mockResolvedValue({
+        _id: 'sms123',
+        status: 'unknown',
+        device: deviceId,
+        attemptCount: 1,
+        metadata: { dispatchAttempts: [{ deviceId }] },
+      })
+
+      const result = await service.updateSMSStatus(deviceId, {
+        smsId: 'sms123',
+        status: 'FAILED',
+        errorCode: '1',
+      } as any)
+
+      expect(result).toEqual(expect.objectContaining({ ignored: true }))
+      expect(mockSmsOutboxService.handleSendFailureAndFailover).not.toHaveBeenCalled()
     })
   })
 

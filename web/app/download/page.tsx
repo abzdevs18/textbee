@@ -15,15 +15,22 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 
 const androidRelease = {
-  version: '2.8.27',
-  versionCode: 45,
-  releasedAt: 'November 24, 2026',
+  version: '2.8.28',
+  versionCode: 46,
+  releasedAt: 'November 26, 2026',
   minimumAndroid: 'Android 5.1+',
-  fileName: 'gabay-sms-2.8.27.apk',
-  fileSize: '13.92 MB',
-  downloadUrl: '/downloads/gabay-sms-2.8.27.apk',
-  sha256: 'F65BDE1DF5EB7503D034C1D46E5561EB0BF159404FEADED39D54BFB9E23035B0',
+  fileName: 'gabay-sms-2.8.28.apk',
+  fileSize: '13.93 MB',
+  downloadUrl: '/downloads/gabay-sms-2.8.28.apk',
+  sha256: '6B90D7166F313DA99B77F55DF92D091E04696C54C2144A87A34EC5C1E5371DA4',
 }
+
+const releaseHighlights = [
+  'Per-SIM in-flight tracking and submission-based 10s dual-SIM / 20s per-SIM pacing so a slow SIM no longer blocks the healthy SIM.',
+  'Eliminated post-timeout double-gap penalties and leaked server slots by reporting unconfirmed timeouts (UNKNOWN) and completing partial-confirmed multipart SMS after a 20s grace window.',
+  'Strict SIM slot filtering (excludes disabled, opportunistic, and non-READY slots) plus delivery-report recovery when SENT callbacks are missed.',
+  'Expedited status reporting, resync deadlock recovery, decoupled broadcast callback execution, and paused-SIM re-claim guards for large bursts.',
+]
 
 const installationSteps = [
   'Download the APK directly to your Android phone.',
@@ -120,6 +127,20 @@ export default function DownloadPage() {
             <code className='mt-2 block break-all text-xs leading-5 text-slate-600 dark:text-slate-400'>
               {androidRelease.sha256}
             </code>
+          </div>
+
+          <div className='mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950'>
+            <h3 className='text-sm font-medium text-slate-900 dark:text-white'>
+              What&apos;s new in {androidRelease.version}
+            </h3>
+            <ul className='mt-3 space-y-2 text-xs leading-5 text-slate-600 dark:text-slate-300'>
+              {releaseHighlights.map((item) => (
+                <li key={item} className='flex items-start gap-2.5'>
+                  <Check className='mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600' />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
 

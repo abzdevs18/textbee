@@ -81,6 +81,22 @@ export class Device {
   @Prop({ type: Number, default: DEFAULT_SMS_SEND_DELAY_SECONDS })
   smsSendDelaySeconds: number
 
+  /** Timestamps of recent send failures/unknowns on this device (sliding cooldown window). */
+  @Prop({ type: [Date], default: [] })
+  recentSendFailures?: Date[]
+
+  /** Server-owned send cooldown expiry (set on ALL_SIMS_PAUSED or failure threshold). */
+  @Prop({ type: Date })
+  sendCooldownUntil?: Date
+
+  /** Why this device is currently in send cooldown (e.g. ALL_SIMS_PAUSED, FAILURE_THRESHOLD). */
+  @Prop({ type: String })
+  sendCooldownReason?: string
+
+  /** Timestamp of last recovery (SENT/DELIVERED or explicit unpause) that resets older failure counts. */
+  @Prop({ type: Date })
+  failureWindowResetAt?: Date
+
   @Prop({ type: Date })
   lastHeartbeat: Date
 

@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.core.os.UserManagerCompat
 import com.vernu.sms.outbox.OutboxPollScheduler
 import com.vernu.sms.outbox.OutboxSync
+import com.vernu.sms.outbox.SimRotationManager
 
 /** Periodic outbox pull fired by [OutboxPollScheduler]; reschedules itself. */
 class OutboxPollReceiver : BroadcastReceiver() {
@@ -23,8 +24,12 @@ class OutboxPollReceiver : BroadcastReceiver() {
         val pending = goAsync()
         OutboxSync.runOnNetworkThread {
             try {
-                val result = OutboxSync.claimAndDispatch(app, "poll")
-                Log.d(TAG, "Outbox poll: $result")
+                if (SimRotationManager.areAllSimsPaused(app)) {
+                    Log.d(TAG, "Outbox poll skipped — all SIMs are paused")
+                } else {
+                    val result = OutboxSync.claimAndDispatch(app, "poll")
+                    Log.d(TAG, "Outbox poll: $result")
+                }
             } finally {
                 OutboxPollScheduler.schedule(app)
                 pending.finish()

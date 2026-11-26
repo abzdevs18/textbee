@@ -61,6 +61,14 @@ export const NON_RETRYABLE_DEVICE_ERRORS = [
   '8', // SmsManager.RESULT_ERROR_SHORT_CODE_NEVER_ALLOWED
 ] as const
 
+/** Recipient/content-specific errors that say nothing about handset/SIM health. */
+export const RECIPIENT_ONLY_DEVICE_ERRORS = [
+  'INVALID_RECIPIENT',
+  '6', // SmsManager.RESULT_ERROR_FDN_CHECK_FAILURE
+  '7', // SmsManager.RESULT_ERROR_SHORT_CODE_NOT_ALLOWED
+  '8', // SmsManager.RESULT_ERROR_SHORT_CODE_NEVER_ALLOWED
+] as const
+
 export const SMS_REASON_RETRY_SCHEDULED = 'RETRY_SCHEDULED'
 export const SMS_REASON_RETRY_BACKOFF = 'RETRY_BACKOFF'
 
@@ -73,3 +81,14 @@ export const RESENDABLE_BLOCKED_STATUSES = ['pending', 'dispatched'] as const
 export const SMS_ERROR_EXPIRED = 'EXPIRED_MAX_AGE'
 export const SMS_ERROR_MAX_ATTEMPTS = 'MAX_ATTEMPTS_EXCEEDED'
 export const SMS_ERROR_NO_DEVICE = 'NO_ELIGIBLE_DEVICE'
+export const SMS_ERROR_ALL_SIMS_PAUSED = 'ALL_SIMS_PAUSED'
+export const SMS_ERROR_CONFIRM_TIMEOUT = 'CONFIRM_TIMEOUT'
+
+/** Cooldown duration (minutes) applied immediately when a handset reports ALL_SIMS_PAUSED. */
+export const DEVICE_ALL_SIMS_PAUSED_COOLDOWN_MINUTES = DEVICE_FAILURE_COOLDOWN_MINUTES
+
+/** Cooldown reason stored on Device.sendCooldownReason when hitting DEVICE_FAILURE_THRESHOLD. */
+export const DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD = 'FAILURE_THRESHOLD'
+
+/** Max recent send-failure timestamps retained on a Device document. */
+export const DEVICE_RECENT_FAILURES_MAX_RETAINED = 20

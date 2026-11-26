@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
@@ -45,23 +46,32 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
         private const val NOTIFICATION_ID = 7302
         private const val CHANNEL_ID = "sms_dispatch"
 
+        /** Short linear backoff if the OS preempts a running dispatch job. */
+        private const val PREEMPTION_BACKOFF_SECONDS = 10L
+        /** Slice coroutine waits so SystemClock.elapsedRealtime() is re-checked across CPU sleep. */
+        private const val SLEEP_SLICE_MS = 2_000L
+
         /**
          * Coalesced: at most one run waiting behind the running one. Blocks
          * briefly on WorkManager state, so call it off the main thread.
          */
         @JvmStatic
-        fun enqueue(context: Context, initialDelayMs: Long = 0) {
+        @JvmOverloads
+        fun enqueue(context: Context, initialDelayMs: Long = 0, replaceWaiting: Boolean = false) {
             val workManager = WorkManager.getInstance(context.applicationContext)
-            val alreadyWaiting = try {
-                workManager.getWorkInfosForUniqueWork(UNIQUE_WORK)
-                    .get(3, TimeUnit.SECONDS)
-                    .any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
-            } catch (e: Exception) {
-                false
+            if (!replaceWaiting) {
+                val alreadyWaiting = try {
+                    workManager.getWorkInfosForUniqueWork(UNIQUE_WORK)
+                        .get(3, TimeUnit.SECONDS)
+                        .any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+                } catch (e: Exception) {
+                    false
+                }
+                if (alreadyWaiting) return
             }
-            if (alreadyWaiting) return
 
             val builder = OneTimeWorkRequest.Builder(SmsDispatchWorker::class.java)
+                .setBackoffCriteria(BackoffPolicy.LINEAR, PREEMPTION_BACKOFF_SECONDS, TimeUnit.SECONDS)
             if (initialDelayMs > 0) {
                 // Expedited work cannot be delayed; long send delays use a normal job.
                 // Never longer than the largest send delay: a parked run blocks every later kick.
@@ -69,9 +79,18 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
             } else {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
-            workManager.enqueueUniqueWork(
-                UNIQUE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, builder.build()
-            )
+            val policy = if (replaceWaiting) {
+                ExistingWorkPolicy.REPLACE
+            } else {
+                ExistingWorkPolicy.APPEND_OR_REPLACE
+            }
+            workManager.enqueueUniqueWork(UNIQUE_WORK, policy, builder.build())
+        }
+
+        /** Cancels any pending dispatch runs (e.g. clearing a stale delayed run on settings toggle). */
+        @JvmStatic
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context.applicationContext).cancelUniqueWork(UNIQUE_WORK)
         }
 
         /**
@@ -121,13 +140,13 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
         while (!isStopped) {
             when (val outcome = SmsDispatcher.dispatchDue(applicationContext)) {
                 SmsDispatcher.DispatchOutcome.Idle -> return@withContext Result.success()
-                SmsDispatcher.DispatchOutcome.Busy -> delay(BUSY_RETRY_MS)
+                SmsDispatcher.DispatchOutcome.Busy -> awaitElapsed(BUSY_RETRY_MS)
                 is SmsDispatcher.DispatchOutcome.Wait -> {
                     val remaining = deadline - SystemClock.elapsedRealtime()
                     if (outcome.delayMs >= remaining && outcome.delayMs <= SHORT_WAIT_MS) {
                         // A short wait (SIM gap, confirmation poll) is cheaper to sit out than to
                         // hand to a delayed job, which Doze may postpone; continue as fresh expedited work.
-                        delay(outcome.delayMs)
+                        awaitElapsed(outcome.delayMs)
                         enqueue(applicationContext)
                         return@withContext Result.success()
                     }
@@ -137,11 +156,25 @@ class SmsDispatchWorker(context: Context, params: WorkerParameters) : CoroutineW
                         enqueue(applicationContext, outcome.delayMs)
                         return@withContext Result.success()
                     }
-                    delay(outcome.delayMs)
+                    awaitElapsed(outcome.delayMs)
                 }
             }
         }
         Result.success()
+    }
+
+    /**
+     * Waits using [SystemClock.elapsedRealtime] as the deadline clock rather than raw
+     * `delay()` alone (`System.nanoTime()` pauses during CPU deep sleep).
+     */
+    private suspend fun awaitElapsed(waitMs: Long) {
+        if (waitMs <= 0L) return
+        val targetElapsed = SystemClock.elapsedRealtime() + waitMs
+        while (!isStopped) {
+            val left = targetElapsed - SystemClock.elapsedRealtime()
+            if (left <= 0L) return
+            delay(minOf(left, SLEEP_SLICE_MS))
+        }
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(applicationContext)

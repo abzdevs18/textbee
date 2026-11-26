@@ -30,7 +30,7 @@ class OutboxStore private constructor(context: Context) :
         )
         private val TERMINAL_STATES = arrayOf(
             LocalState.SENT.name, LocalState.DELIVERED.name,
-            LocalState.FAILED.name, LocalState.EXPIRED.name
+            LocalState.FAILED.name, LocalState.UNKNOWN.name, LocalState.EXPIRED.name
         )
 
         @Volatile
@@ -195,6 +195,39 @@ class OutboxStore private constructor(context: Context) :
         return find(db, localId)
     }
 
+    /**
+     * Finalizes a SUBMITTED entry whose confirmation timed out (or hit partial-confirm grace).
+     * Requires matching [sendSeq] and [LocalState.SUBMITTED] so a concurrent radio callback wins cleanly.
+     */
+    @Synchronized
+    fun finishTimedOut(
+        localId: String,
+        sendSeq: Int,
+        state: LocalState,
+        errorCode: String?,
+        errorMessage: String?,
+        nowMs: Long
+    ): OutboxEntry? {
+        val db = writableDatabase
+        val entry = find(db, localId) ?: return null
+        if (entry.sendSeq != sendSeq || entry.state != LocalState.SUBMITTED) return null
+        db.update(TABLE, ContentValues().apply {
+            put("state", state.name)
+            if (state == LocalState.SENT || state == LocalState.DELIVERED) {
+                putNull("error_code")
+                putNull("error_message")
+            } else {
+                val resolvedCode = errorCode ?: entry.errorCode
+                val resolvedMessage = errorMessage ?: entry.errorMessage
+                if (resolvedCode != null) put("error_code", resolvedCode) else putNull("error_code")
+                if (resolvedMessage != null) put("error_message", resolvedMessage) else putNull("error_message")
+            }
+            put("completed_at_ms", nowMs)
+            put("updated_at_ms", nowMs)
+        }, "local_id = ?", arrayOf(localId))
+        return find(db, localId)
+    }
+
     /** Parks a queued entry whose server lease ran out; nothing is reported. */
     @Synchronized
     fun markLapsed(localId: String, nowMs: Long): Boolean {
@@ -234,13 +267,20 @@ class OutboxStore private constructor(context: Context) :
             plan.finalState?.let {
                 put("state", it.name)
                 put("completed_at_ms", nowMs)
+                if (it == LocalState.SENT || it == LocalState.DELIVERED) {
+                    putNull("error_code")
+                    putNull("error_message")
+                }
             }
         }, "local_id = ?", arrayOf(localId))
         val updated = find(db, localId) ?: return PartOutcome.Ignored
         return if (plan.finalState != null) PartOutcome.Completed(updated) else PartOutcome.Pending
     }
 
-    /** Aggregates per-part delivery reports; completes once every part is delivered. */
+    /**
+     * Aggregates per-part delivery reports; completes once every part is delivered.
+     * Also promotes SUBMITTED or UNKNOWN entries whose SENT callback was lost.
+     */
     @Synchronized
     fun recordDeliveredPart(
         localId: String,
@@ -251,26 +291,22 @@ class OutboxStore private constructor(context: Context) :
     ): PartOutcome {
         val db = writableDatabase
         val entry = find(db, localId) ?: return PartOutcome.Ignored
-        if (entry.sendSeq != sendSeq) return PartOutcome.Ignored
-        if (entry.state != LocalState.SENT && entry.state != LocalState.SUBMITTED) {
-            return PartOutcome.Ignored
-        }
-
-        val expected = PartMath.expected(entry.partsTotal, partCount)
-        val deliveredMask = entry.partsDeliveredMask or PartMath.bit(partIndex)
-        val complete = entry.state == LocalState.SENT &&
-            PartMath.isComplete(deliveredMask, expected)
+        val plan = OutboxPolicy.decideDeliveredPart(entry, sendSeq, partIndex, partCount)
+            ?: return PartOutcome.Ignored
 
         db.update(TABLE, ContentValues().apply {
-            put("parts_delivered_mask", deliveredMask)
+            put("parts_total", plan.expected)
+            put("parts_delivered_mask", plan.deliveredMask)
             put("updated_at_ms", nowMs)
-            if (complete) {
+            if (plan.completed) {
                 put("state", LocalState.DELIVERED.name)
                 put("completed_at_ms", nowMs)
+                putNull("error_code")
+                putNull("error_message")
             }
         }, "local_id = ?", arrayOf(localId))
         val updated = find(db, localId) ?: return PartOutcome.Ignored
-        return if (complete) PartOutcome.Completed(updated) else PartOutcome.Pending
+        return if (plan.completed) PartOutcome.Completed(updated) else PartOutcome.Pending
     }
 
     @Synchronized
@@ -326,19 +362,21 @@ class OutboxStore private constructor(context: Context) :
     @Synchronized
     fun prune(nowMs: Long) {
         val db = writableDatabase
+        val terminalPlaceholders = TERMINAL_STATES.joinToString(", ") { "?" }
+        val stalePlaceholders = STALE_CANDIDATE_STATES.joinToString(", ") { "?" }
         db.delete(
             TABLE,
-            "state IN (?, ?, ?, ?) AND updated_at_ms < ?",
+            "state IN ($terminalPlaceholders) AND updated_at_ms < ?",
             TERMINAL_STATES + (nowMs - TERMINAL_RETENTION_MS).toString()
         )
         db.delete(
             TABLE,
-            "state IN (?, ?, ?) AND updated_at_ms < ?",
+            "state IN ($stalePlaceholders) AND updated_at_ms < ?",
             STALE_CANDIDATE_STATES + (nowMs - STALE_ACTIVE_RETENTION_MS).toString()
         )
         db.execSQL(
             "DELETE FROM $TABLE WHERE local_id IN (" +
-                "SELECT local_id FROM $TABLE WHERE state IN (?, ?, ?, ?) " +
+                "SELECT local_id FROM $TABLE WHERE state IN ($terminalPlaceholders) " +
                 "ORDER BY updated_at_ms DESC LIMIT -1 OFFSET $MAX_ROWS)",
             arrayOf<Any>(*TERMINAL_STATES)
         )

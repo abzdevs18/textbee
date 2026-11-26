@@ -340,8 +340,8 @@ export class UpdateSMSStatusDTO {
   @ApiProperty({
     type: String,
     required: true,
-    description: 'The status of the SMS (sent, delivered, failed)',
-    enum: ['sent', 'delivered', 'failed'],
+    description: 'The status of the SMS (sent, delivered, failed, unknown)',
+    enum: ['sent', 'delivered', 'failed', 'unknown'],
   })
   status: string
 
@@ -502,6 +502,14 @@ export class HeartbeatInputDTO {
     description: 'SMS send delay in seconds (0-3600), used by device queue',
   })
   smsSendDelaySeconds?: number
+
+  @ApiProperty({
+    type: Boolean,
+    required: false,
+    description:
+      'Whether all SIMs on the handset are currently paused by SIM rotation health. When true, keeps ALL_SIMS_PAUSED cooldown active; when false, clears an active ALL_SIMS_PAUSED cooldown.',
+  })
+  allSimsPaused?: boolean
 
   @ApiProperty({ type: SimInfoCollectionDTO, required: false })
   simInfo?: SimInfoCollectionDTO

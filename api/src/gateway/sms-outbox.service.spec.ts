@@ -5,7 +5,9 @@ import * as firebaseAdmin from 'firebase-admin'
 import {
   DispatchResult,
   SmsOutboxService,
+  countRecentDeviceStrikes,
   dispatchLeaseMsFor,
+  getActiveDeviceCooldown,
   maxInFlightFor,
 } from './sms-outbox.service'
 import { Device } from './schemas/device.schema'
@@ -13,7 +15,13 @@ import { SMS } from './schemas/sms.schema'
 import { SMSBatch } from './schemas/sms-batch.schema'
 import { WebhookService } from '../webhook/webhook.service'
 import { SMSType } from './sms-type.enum'
-import { SMS_DISPATCH_LEASE_MS, SMS_LEASE_MS } from './sms-delivery.constants'
+import {
+  DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD,
+  DEVICE_FAILURE_COOLDOWN_MINUTES,
+  SMS_DISPATCH_LEASE_MS,
+  SMS_ERROR_ALL_SIMS_PAUSED,
+  SMS_LEASE_MS,
+} from './sms-delivery.constants'
 
 jest.mock('firebase-admin', () => ({
   messaging: jest.fn().mockReturnValue({
@@ -854,6 +862,319 @@ describe('SmsOutboxService', () => {
         'nextAttemptAt',
       )
       trySpy.mockRestore()
+    })
+  })
+
+  describe('ALL_SIMS_PAUSED and durable device failure cooldown', () => {
+    const queryResult = <T>(value: T) => {
+      const promise = Promise.resolve(value) as Promise<T> & {
+        exec: () => Promise<T>
+      }
+      promise.exec = () => promise
+      return promise
+    }
+
+    const pausedId = new Types.ObjectId()
+    const healthyId = new Types.ObjectId()
+    const pausedDevice = {
+      _id: pausedId,
+      user: 'user123',
+      enabled: true,
+      fcmToken: 'paused-token',
+      lastHeartbeat: new Date(),
+    }
+    const healthyDevice = {
+      _id: healthyId,
+      user: 'user123',
+      enabled: true,
+      fcmToken: 'healthy-token',
+      lastHeartbeat: new Date(),
+    }
+
+    it('immediately cools down a device reporting ALL_SIMS_PAUSED and fails over to a healthy peer without retry backoff', async () => {
+      const deviceState = new Map<string, any>([
+        [pausedId.toString(), { ...pausedDevice }],
+        [healthyId.toString(), { ...healthyDevice }],
+      ])
+      mockDeviceModel.find.mockImplementation(async () =>
+        Array.from(deviceState.values()),
+      )
+      mockDeviceModel.findByIdAndUpdate.mockImplementation(
+        (id: string, update: any) => {
+          const row = deviceState.get(String(id))
+          if (row && update?.$set) Object.assign(row, update.$set)
+          if (row && update?.$push?.recentSendFailures?.$each) {
+            row.recentSendFailures = [
+              ...(row.recentSendFailures || []),
+              ...update.$push.recentSendFailures.$each,
+            ]
+          }
+          return queryResult(row)
+        },
+      )
+
+      const smsRow = buildSms({
+        status: 'dispatched',
+        device: pausedId,
+        preferredDevice: pausedId,
+        attemptCount: 1,
+      })
+      mockSmsModel.findById.mockResolvedValue(smsRow)
+      mockSmsModel.findByIdAndUpdate.mockResolvedValue(undefined)
+      mockSmsModel.findOneAndUpdate.mockResolvedValue(
+        buildSms({
+          status: 'pending',
+          device: healthyId,
+          attemptCount: 2,
+          excludedDeviceIds: [pausedId],
+        }),
+      )
+      ;(firebaseAdmin.messaging as jest.Mock).mockReturnValue({
+        sendEach: jest.fn().mockResolvedValue({
+          responses: [{ success: true }],
+          successCount: 1,
+          failureCount: 0,
+        }),
+      })
+
+      const result = await service.handleSendFailureAndFailover(
+        smsId.toString(),
+        pausedId.toString(),
+        SMS_ERROR_ALL_SIMS_PAUSED,
+        'All SIMs paused',
+      )
+
+      expect(result).toEqual({
+        smsId: smsId.toString(),
+        status: 'dispatched',
+        deviceId: healthyId.toString(),
+      })
+
+      const updatedPaused = deviceState.get(pausedId.toString())
+      expect(updatedPaused.sendCooldownReason).toBe(SMS_ERROR_ALL_SIMS_PAUSED)
+      expect(getActiveDeviceCooldown(updatedPaused).active).toBe(true)
+
+      // No exponential retry backoff was set because the healthy peer took it immediately.
+      const backoffUpdate = mockSmsModel.findByIdAndUpdate.mock.calls.find(
+        (call) => call[1]?.$set?.nextAttemptAt,
+      )
+      expect(backoffUpdate).toBeUndefined()
+
+      // Subsequent pool selection excludes the paused device even though its inFlight is 0.
+      const eligible = await service.listEligibleDevices('user123')
+      expect(eligible.map((d) => d._id.toString())).toEqual([healthyId.toString()])
+    })
+
+    it('waits without exponential retry backoff when a healthy peer is busy during ALL_SIMS_PAUSED failover', async () => {
+      const deviceState = new Map<string, any>([
+        [pausedId.toString(), { ...pausedDevice }],
+        [healthyId.toString(), { ...healthyDevice }],
+      ])
+      mockDeviceModel.find.mockImplementation(async () =>
+        Array.from(deviceState.values()),
+      )
+      mockDeviceModel.findByIdAndUpdate.mockImplementation(
+        (id: string, update: any) => {
+          const row = deviceState.get(String(id))
+          if (row && update?.$set) Object.assign(row, update.$set)
+          return queryResult(row)
+        },
+      )
+      mockSmsModel.countDocuments.mockImplementation(async (filter: any) =>
+        String(filter.device) === healthyId.toString() ? 5 : 0,
+      )
+      mockSmsModel.findById.mockResolvedValue(
+        buildSms({
+          status: 'dispatched',
+          device: pausedId,
+          preferredDevice: pausedId,
+          attemptCount: 1,
+        }),
+      )
+      mockSmsModel.findByIdAndUpdate.mockResolvedValue(undefined)
+      ;(firebaseAdmin.messaging as jest.Mock).mockReturnValue({
+        sendEach: jest.fn().mockResolvedValue({ responses: [], successCount: 0, failureCount: 0 }),
+      })
+
+      const result = await service.handleSendFailureAndFailover(
+        smsId.toString(),
+        pausedId.toString(),
+        SMS_ERROR_ALL_SIMS_PAUSED,
+        'All SIMs paused',
+      )
+
+      expect(result).toEqual(
+        expect.objectContaining({ status: 'pending', reason: 'NO_ELIGIBLE_DEVICE' }),
+      )
+      const backoffUpdate = mockSmsModel.findByIdAndUpdate.mock.calls.find(
+        (call) => call[1]?.$set?.nextAttemptAt,
+      )
+      expect(backoffUpdate).toBeUndefined()
+    })
+
+    it('blocks claimForDevice from handing fresh pending SMS to a cooled-down device', async () => {
+      const cooledDown = {
+        ...pausedDevice,
+        sendCooldownUntil: new Date(Date.now() + 4 * 60 * 1000),
+        sendCooldownReason: SMS_ERROR_ALL_SIMS_PAUSED,
+      }
+      mockDeviceModel.findById.mockResolvedValue(cooledDown)
+
+      const result = await service.claimForDevice(pausedId.toString(), 5)
+
+      expect(result).toEqual({ claimed: 0, redelivered: 0, messages: [] })
+      expect(mockSmsModel.findOneAndUpdate).not.toHaveBeenCalled()
+    })
+
+    it('schedules retry backoff when all devices in the pool are ALL_SIMS_PAUSED', async () => {
+      const otherPaused = {
+        ...healthyDevice,
+        sendCooldownUntil: new Date(Date.now() + 4 * 60 * 1000),
+        sendCooldownReason: SMS_ERROR_ALL_SIMS_PAUSED,
+      }
+      const deviceState = new Map<string, any>([
+        [pausedId.toString(), { ...pausedDevice }],
+        [healthyId.toString(), otherPaused],
+      ])
+      mockDeviceModel.find.mockImplementation(async () =>
+        Array.from(deviceState.values()),
+      )
+      mockDeviceModel.findByIdAndUpdate.mockImplementation(
+        (id: string, update: any) => {
+          const row = deviceState.get(String(id))
+          if (row && update?.$set) Object.assign(row, update.$set)
+          return queryResult(row)
+        },
+      )
+      mockSmsModel.findById.mockResolvedValue(
+        buildSms({
+          status: 'dispatched',
+          device: pausedId,
+          preferredDevice: pausedId,
+          attemptCount: 1,
+        }),
+      )
+      mockSmsModel.findByIdAndUpdate.mockResolvedValue(undefined)
+      ;(firebaseAdmin.messaging as jest.Mock).mockReturnValue({
+        sendEach: jest.fn().mockResolvedValue({ responses: [], successCount: 0, failureCount: 0 }),
+      })
+
+      const result = await service.handleSendFailureAndFailover(
+        smsId.toString(),
+        pausedId.toString(),
+        SMS_ERROR_ALL_SIMS_PAUSED,
+        'All SIMs paused',
+      )
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          reason: 'RETRY_SCHEDULED',
+        }),
+      )
+      const backoffUpdate = mockSmsModel.findByIdAndUpdate.mock.calls.find(
+        (call) => call[1]?.$set?.nextAttemptAt,
+      )
+      expect(backoffUpdate).toBeDefined()
+    })
+
+    it('triggers device cooldown after DEVICE_FAILURE_THRESHOLD failover strikes even when SMS rows reset to pending', async () => {
+      const tracked: any = { ...pausedDevice, recentSendFailures: [] }
+      mockDeviceModel.findByIdAndUpdate.mockImplementation(
+        (_id: string, update: any) => {
+          if (update?.$push?.recentSendFailures?.$each) {
+            tracked.recentSendFailures = [
+              ...tracked.recentSendFailures,
+              ...update.$push.recentSendFailures.$each,
+            ]
+          }
+          if (update?.$set) {
+            Object.assign(tracked, update.$set)
+          }
+          return queryResult(tracked)
+        },
+      )
+      // Simulate SMS collection showing 0 terminal failed rows because failovers reset status to pending.
+      mockSmsModel.countDocuments.mockResolvedValue(0)
+
+      const first = await service.recordDeviceSendFailure(pausedId.toString(), '1')
+      const second = await service.recordDeviceSendFailure(pausedId.toString(), '4')
+      const third = await service.recordDeviceSendFailure(pausedId.toString(), '1')
+
+      expect(first.cooledDown).toBe(false)
+      expect(second.cooledDown).toBe(false)
+      expect(third.cooledDown).toBe(true)
+      expect(third.reason).toBe(DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD)
+      expect(tracked.sendCooldownReason).toBe(DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD)
+
+      const check = await service.isDeviceEligible(tracked, 'user123')
+      expect(check.eligible).toBe(false)
+      expect(check.reason).toContain('Send cooldown')
+
+      mockDeviceModel.findById.mockResolvedValue(tracked)
+      const claim = await service.claimForDevice(pausedId.toString(), 5)
+      expect(claim.claimed).toBe(0)
+    })
+
+    it('ignores recipient-only errors when tracking device health strikes', async () => {
+      const res1 = await service.recordDeviceSendFailure(pausedId.toString(), 'INVALID_RECIPIENT')
+      const res2 = await service.recordDeviceSendFailure(pausedId.toString(), '7')
+
+      expect(res1.cooledDown).toBe(false)
+      expect(res2.cooledDown).toBe(false)
+      expect(mockDeviceModel.findByIdAndUpdate).not.toHaveBeenCalled()
+    })
+
+    it('recovers device eligibility on recordDeviceSendSuccess and after cooldown window expires', async () => {
+      const now = new Date()
+      const tracked: any = {
+        ...pausedDevice,
+        recentSendFailures: [now, now, now],
+        sendCooldownUntil: new Date(now.getTime() + 4 * 60 * 1000),
+        sendCooldownReason: DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD,
+      }
+      mockDeviceModel.findByIdAndUpdate.mockImplementation(
+        (_id: string, update: any) => {
+          if (update?.$set) Object.assign(tracked, update.$set)
+          if (update?.$unset) {
+            for (const key of Object.keys(update.$unset)) delete tracked[key]
+          }
+          return queryResult(tracked)
+        },
+      )
+
+      await service.recordDeviceSendSuccess(pausedId.toString(), now)
+
+      expect(tracked.recentSendFailures).toEqual([])
+      expect(tracked.sendCooldownUntil).toBeUndefined()
+      expect(tracked.sendCooldownReason).toBeUndefined()
+      expect(tracked.failureWindowResetAt).toEqual(now)
+
+      const checkAfterSuccess = await service.isDeviceEligible(tracked, 'user123')
+      expect(checkAfterSuccess.eligible).toBe(true)
+      // SMS failure query uses failureWindowResetAt so older pre-recovery unknown/failed rows don't re-block.
+      const countFilter = mockSmsModel.countDocuments.mock.calls.find(
+        (call) => call[0]?.status?.$in,
+      )?.[0]
+      expect(countFilter.$or[0].failedAt).toEqual({ $gt: now })
+
+      // Expiry recovery without explicit success: stale strikes + expired sendCooldownUntil -> eligible again.
+      const oldTs = new Date(
+        Date.now() - (DEVICE_FAILURE_COOLDOWN_MINUTES + 1) * 60 * 1000,
+      )
+      const expiredCooldownDevice = {
+        ...pausedDevice,
+        recentSendFailures: [oldTs, oldTs, oldTs],
+        sendCooldownUntil: new Date(Date.now() - 1000),
+        sendCooldownReason: SMS_ERROR_ALL_SIMS_PAUSED,
+      }
+      expect(countRecentDeviceStrikes(expiredCooldownDevice)).toBe(0)
+      expect(getActiveDeviceCooldown(expiredCooldownDevice).active).toBe(false)
+      const checkAfterExpiry = await service.isDeviceEligible(
+        expiredCooldownDevice,
+        'user123',
+      )
+      expect(checkAfterExpiry.eligible).toBe(true)
     })
   })
 })

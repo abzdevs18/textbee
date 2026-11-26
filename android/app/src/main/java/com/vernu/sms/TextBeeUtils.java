@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
@@ -44,6 +45,77 @@ public class TextBeeUtils {
         SubscriptionManager subscriptionManager = SubscriptionManager.from(context);
         return subscriptionManager.getActiveSubscriptionInfoList();
 
+    }
+
+    /**
+     * Checks whether a subscription represents a physically present, enabled,
+     * non-opportunistic, READY SIM slot suitable for sending SMS.
+     */
+    public static boolean isSubscriptionUsable(Context context, SubscriptionInfo info) {
+        if (info == null) {
+            return false;
+        }
+        if (info.getSubscriptionId() < 0) {
+            return false;
+        }
+        int slotIndex = info.getSimSlotIndex();
+        if (slotIndex < 0) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                if (info.isOpportunistic()) {
+                    return false;
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "Could not check opportunistic flag for sub " + info.getSubscriptionId() + ": " + e.getMessage());
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                // areUiccApplicationsEnabled() is @SystemApi (not in compileSdk stubs);
+                // probe via reflection when accessible and fall back gracefully otherwise.
+                Object enabled = SubscriptionInfo.class
+                        .getMethod("areUiccApplicationsEnabled")
+                        .invoke(info);
+                if (Boolean.FALSE.equals(enabled)) {
+                    return false;
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "Could not check UICC enabled flag for sub " + info.getSubscriptionId() + ": " + e.getMessage());
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                TelephonyManager telephonyManager =
+                        (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                if (telephonyManager != null &&
+                        telephonyManager.getSimState(slotIndex) != TelephonyManager.SIM_STATE_READY) {
+                    return false;
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "Could not check SIM state for slot " + slotIndex + ": " + e.getMessage());
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns only active SIM subscriptions that pass [isSubscriptionUsable]
+     * (excludes unslotted, opportunistic, disabled, and non-READY SIMs).
+     */
+    public static List<SubscriptionInfo> getUsableSimSlots(Context context) {
+        List<SubscriptionInfo> usable = new ArrayList<>();
+        List<SubscriptionInfo> available = getAvailableSimSlots(context);
+        if (available == null) {
+            return usable;
+        }
+        for (SubscriptionInfo info : available) {
+            if (isSubscriptionUsable(context, info)) {
+                usable.add(info);
+            }
+        }
+        return usable;
     }
 
     public static void startStickyNotificationService(Context context) {
@@ -307,7 +379,8 @@ public class TextBeeUtils {
             }
 
             for (SubscriptionInfo subscriptionInfo : subscriptionInfoList) {
-                if (subscriptionInfo.getSubscriptionId() == subscriptionId) {
+                if (subscriptionInfo.getSubscriptionId() == subscriptionId &&
+                        isSubscriptionUsable(context, subscriptionInfo)) {
                     return true;
                 }
             }

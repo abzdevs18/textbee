@@ -91,6 +91,11 @@ class OutboxLogicTest {
         val sentLocally = MessageStatusMapper.describe("dispatched", null, null, LocalState.SENT, null)
         assertEquals("Sent", sentLocally.label)
         assertEquals(StatusTone.SENT, sentLocally.tone)
+
+        val unknownLocally = MessageStatusMapper.describe("dispatched", null, null, LocalState.UNKNOWN, "Timed out")
+        assertEquals("No confirmation", unknownLocally.label)
+        assertEquals(StatusTone.WARNING, unknownLocally.tone)
+        assertEquals("Timed out", unknownLocally.detail)
     }
 
     @Test
@@ -135,17 +140,28 @@ class OutboxLogicTest {
         val adopt = OutboxPolicy.decideAccept(submitted, command(attempt = 2), now)
         assertEquals(AcceptAction.BUMP_ATTEMPT, adopt.action)
         assertEquals(AcceptResult.InFlight, adopt.result)
-        // Newer attempt after 10 minutes without any SENT callback: deliberate retry.
-        val stale = entry(state = LocalState.SUBMITTED, attempt = 1, submittedAt = now - 11 * minute)
+        // Newer attempt after 5 minutes (e.g. server 10m lease reclaim on a queued item submitted 2m late)
+        // requeues cleanly instead of hitting BUMP_ATTEMPT and leaking a second 10-minute lease.
+        val stale = entry(state = LocalState.SUBMITTED, attempt = 1, submittedAt = now - 6 * minute)
         assertEquals(AcceptAction.REQUEUE, OutboxPolicy.decideAccept(stale, command(attempt = 2), now).action)
     }
 
     @Test
-    fun finishedSendsAreReReportedNotResent() {
+    fun finishedAndUnknownSendsAreReReportedNotResent() {
         val sent = entry(state = LocalState.SENT, attempt = 1)
         val again = OutboxPolicy.decideAccept(sent, command(attempt = 3), now)
         assertEquals(AcceptAction.BUMP_ATTEMPT, again.action)
         assertTrue(again.result is AcceptResult.Rereport)
+
+        // UNKNOWN is terminal: never auto-resent locally, only re-reported under the latest attempt.
+        assertTrue(LocalState.UNKNOWN.isTerminal)
+        val unknown = entry(state = LocalState.UNKNOWN, attempt = 1)
+        val sameUnknown = OutboxPolicy.decideAccept(unknown, command(attempt = 1), now)
+        assertEquals(AcceptAction.NONE, sameUnknown.action)
+        assertTrue(sameUnknown.result is AcceptResult.Rereport)
+        val newerUnknown = OutboxPolicy.decideAccept(unknown, command(attempt = 2), now)
+        assertEquals(AcceptAction.BUMP_ATTEMPT, newerUnknown.action)
+        assertTrue(newerUnknown.result is AcceptResult.Rereport)
 
         val failed = entry(state = LocalState.FAILED, attempt = 1)
         assertTrue(OutboxPolicy.decideAccept(failed, command(attempt = 1), now).result is AcceptResult.Rereport)
@@ -198,6 +214,50 @@ class OutboxLogicTest {
             submitted.copy(partsSentMask = PartMath.bit(0) or PartMath.bit(1)), 2, 2, 3, ok = true
         )!!
         assertEquals(LocalState.SENT, allOk.finalState)
+    }
+
+    @Test
+    fun lateSentCallbackUpgradesUnknownToSentAndIgnoresLateFailure() {
+        val unknown = entry(state = LocalState.UNKNOWN, sendSeq = 1, partsTotal = 1)
+        // Late failure on UNKNOWN is ignored so ambiguous sends never trigger duplicate server retries.
+        assertNull(OutboxPolicy.decideSentPart(unknown, 1, 0, 1, ok = false))
+        // Late RESULT_OK cleanly upgrades UNKNOWN -> SENT.
+        val upgraded = OutboxPolicy.decideSentPart(unknown, 1, 0, 1, ok = true)!!
+        assertEquals(LocalState.SENT, upgraded.finalState)
+    }
+
+    @Test
+    fun deliveryReportPromotesSubmittedAndUnknownDirectlyToDelivered() {
+        // Single-part SUBMITTED entry whose SMS_SENT was lost promotes straight to DELIVERED.
+        val submitted = entry(state = LocalState.SUBMITTED, sendSeq = 2, partsTotal = 1)
+        assertNull(OutboxPolicy.decideDeliveredPart(submitted, 1, 0, 1)) // stale sendSeq ignored
+        val fromSubmitted = OutboxPolicy.decideDeliveredPart(submitted, 2, 0, 1)!!
+        assertTrue(fromSubmitted.completed)
+        assertTrue(fromSubmitted.promotedWithoutSent)
+
+        // Timed-out UNKNOWN entry promotes to DELIVERED when delivery receipt arrives.
+        val unknown = entry(state = LocalState.UNKNOWN, sendSeq = 2, partsTotal = 1)
+        val fromUnknown = OutboxPolicy.decideDeliveredPart(unknown, 2, 0, 1)!!
+        assertTrue(fromUnknown.completed)
+        assertTrue(fromUnknown.promotedWithoutSent)
+
+        // Multipart SUBMITTED waits for every delivered part before completing.
+        val multi = entry(state = LocalState.SUBMITTED, sendSeq = 3, partsTotal = 2)
+        val part0 = OutboxPolicy.decideDeliveredPart(multi, 3, 0, 2)!!
+        assertFalse(part0.completed)
+        val part1 = OutboxPolicy.decideDeliveredPart(multi.copy(partsDeliveredMask = part0.deliveredMask), 3, 1, 2)!!
+        assertTrue(part1.completed)
+        assertTrue(part1.promotedWithoutSent)
+
+        // Normal SENT -> DELIVERED marks promotedWithoutSent = false.
+        val sent = entry(state = LocalState.SENT, sendSeq = 1, partsTotal = 1)
+        val fromSent = OutboxPolicy.decideDeliveredPart(sent, 1, 0, 1)!!
+        assertTrue(fromSent.completed)
+        assertFalse(fromSent.promotedWithoutSent)
+
+        // Non-sendable states ignore delivery reports.
+        assertNull(OutboxPolicy.decideDeliveredPart(entry(state = LocalState.FAILED, sendSeq = 1), 1, 0, 1))
+        assertNull(OutboxPolicy.decideDeliveredPart(entry(state = LocalState.QUEUED, sendSeq = 1), 1, 0, 1))
     }
 
     private fun entry(

@@ -10,12 +10,17 @@ import { SMSType } from './sms-type.enum'
 import { WebhookService } from '../webhook/webhook.service'
 import { WebhookEvent } from '../webhook/webhook-event.enum'
 import {
+  DEVICE_ALL_SIMS_PAUSED_COOLDOWN_MINUTES,
+  DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD,
   DEVICE_FAILURE_COOLDOWN_MINUTES,
   DEVICE_FAILURE_THRESHOLD,
   DEVICE_FAILED_SEND_STATUSES,
   DEVICE_MAX_IN_FLIGHT,
   DEVICE_ONLINE_HEARTBEAT_MS,
+  DEVICE_RECENT_FAILURES_MAX_RETAINED,
   NON_RETRYABLE_DEVICE_ERRORS,
+  RECIPIENT_ONLY_DEVICE_ERRORS,
+  SMS_ERROR_ALL_SIMS_PAUSED,
   SMS_ERROR_EXPIRED,
   SMS_ERROR_MAX_ATTEMPTS,
   SMS_ERROR_NO_DEVICE,
@@ -80,6 +85,50 @@ function isRetryableDeviceFailure(errorCode?: string): boolean {
   return !(NON_RETRYABLE_DEVICE_ERRORS as readonly string[]).includes(
     String(errorCode).trim().toUpperCase(),
   )
+}
+
+function isRecipientOnlyDeviceError(errorCode?: string): boolean {
+  if (!errorCode) return false
+  return (RECIPIENT_ONLY_DEVICE_ERRORS as readonly string[]).includes(
+    String(errorCode).trim().toUpperCase(),
+  )
+}
+
+export function getActiveDeviceCooldown(
+  device: any,
+  nowMs = Date.now(),
+): { active: boolean; until?: Date; reason?: string } {
+  if (!device?.sendCooldownUntil) return { active: false }
+  const until = new Date(device.sendCooldownUntil)
+  if (Number.isNaN(until.getTime()) || until.getTime() <= nowMs) {
+    return { active: false }
+  }
+  return {
+    active: true,
+    until,
+    reason: device.sendCooldownReason || DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD,
+  }
+}
+
+export function countRecentDeviceStrikes(device: any, nowMs = Date.now()): number {
+  if (!Array.isArray(device?.recentSendFailures) || device.recentSendFailures.length === 0) {
+    return 0
+  }
+  const windowStart = nowMs - DEVICE_FAILURE_COOLDOWN_MINUTES * 60 * 1000
+  const resetMs = device?.failureWindowResetAt
+    ? new Date(device.failureWindowResetAt).getTime()
+    : NaN
+  const effectiveStart =
+    Number.isFinite(resetMs) && resetMs > windowStart ? resetMs : windowStart
+
+  let count = 0
+  for (const ts of device.recentSendFailures) {
+    const ms = new Date(ts).getTime()
+    if (Number.isFinite(ms) && ms >= effectiveStart) {
+      count++
+    }
+  }
+  return count
 }
 
 function retryDelayMs(attemptCount: number): number {
@@ -253,18 +302,134 @@ export class SmsOutboxService {
     })
   }
 
-  private async getRecentFailureCount(deviceId: string, userId: any): Promise<number> {
-    const since = new Date(Date.now() - DEVICE_FAILURE_COOLDOWN_MINUTES * 60 * 1000)
-    return this.smsModel.countDocuments({
+  private async getRecentFailureCount(
+    deviceId: string,
+    userId: any,
+    device?: any,
+  ): Promise<number> {
+    const nowMs = Date.now()
+    const windowStartMs = nowMs - DEVICE_FAILURE_COOLDOWN_MINUTES * 60 * 1000
+    const resetMs = device?.failureWindowResetAt
+      ? new Date(device.failureWindowResetAt).getTime()
+      : NaN
+    const dateCondition =
+      Number.isFinite(resetMs) && resetMs > windowStartMs
+        ? { $gt: new Date(resetMs) }
+        : { $gte: new Date(windowStartMs) }
+
+    const smsFailures = await this.smsModel.countDocuments({
       user: userId,
       device: deviceId,
       type: SMSType.SENT,
       status: { $in: [...DEVICE_FAILED_SEND_STATUSES] },
       $or: [
-        { failedAt: { $gte: since } },
-        { updatedAt: { $gte: since } },
-        { createdAt: { $gte: since } },
+        { failedAt: dateCondition },
+        { updatedAt: dateCondition },
+        { createdAt: dateCondition },
       ],
+    })
+    const deviceStrikes = countRecentDeviceStrikes(device, nowMs)
+    return Math.max(smsFailures, deviceStrikes)
+  }
+
+  /**
+   * Persist a handset send-failure strike on the Device row so failover resets
+   * (`status: 'pending'`) never hide repeated failures from cooldown checks.
+   * `ALL_SIMS_PAUSED` places the device into immediate cooldown.
+   */
+  async recordDeviceSendFailure(
+    deviceId: string,
+    errorCode?: string,
+    now: Date = new Date(),
+  ): Promise<{ cooledDown: boolean; reason?: string; cooldownUntil?: Date }> {
+    const normalizedCode = String(errorCode || '').trim().toUpperCase()
+    if (
+      normalizedCode === SMS_ERROR_EXPIRED ||
+      isRecipientOnlyDeviceError(normalizedCode)
+    ) {
+      return { cooledDown: false }
+    }
+
+    if (normalizedCode === SMS_ERROR_ALL_SIMS_PAUSED) {
+      const cooldownUntil = new Date(
+        now.getTime() + DEVICE_ALL_SIMS_PAUSED_COOLDOWN_MINUTES * 60 * 1000,
+      )
+      await this.deviceModel.findByIdAndUpdate(deviceId, {
+        $set: {
+          sendCooldownUntil: cooldownUntil,
+          sendCooldownReason: SMS_ERROR_ALL_SIMS_PAUSED,
+        },
+        $push: {
+          recentSendFailures: {
+            $each: [now],
+            $slice: -DEVICE_RECENT_FAILURES_MAX_RETAINED,
+          },
+        },
+      })
+      return {
+        cooledDown: true,
+        reason: SMS_ERROR_ALL_SIMS_PAUSED,
+        cooldownUntil,
+      }
+    }
+
+    const updated: any = await this.deviceModel.findByIdAndUpdate(
+      deviceId,
+      {
+        $push: {
+          recentSendFailures: {
+            $each: [now],
+            $slice: -DEVICE_RECENT_FAILURES_MAX_RETAINED,
+          },
+        },
+      },
+      { new: true },
+    )
+
+    const strikes = countRecentDeviceStrikes(updated, now.getTime())
+    if (strikes >= DEVICE_FAILURE_THRESHOLD) {
+      const baseCooldownUntil = new Date(
+        now.getTime() + DEVICE_FAILURE_COOLDOWN_MINUTES * 60 * 1000,
+      )
+      const existing = getActiveDeviceCooldown(updated, now.getTime())
+      const cooldownUntil =
+        existing.active && existing.until!.getTime() > baseCooldownUntil.getTime()
+          ? existing.until!
+          : baseCooldownUntil
+      const reason =
+        existing.active && existing.reason === SMS_ERROR_ALL_SIMS_PAUSED
+          ? SMS_ERROR_ALL_SIMS_PAUSED
+          : DEVICE_COOLDOWN_REASON_FAILURE_THRESHOLD
+
+      await this.deviceModel.findByIdAndUpdate(deviceId, {
+        $set: {
+          sendCooldownUntil: cooldownUntil,
+          sendCooldownReason: reason,
+        },
+      })
+      return { cooledDown: true, reason, cooldownUntil }
+    }
+
+    return { cooledDown: false }
+  }
+
+  /**
+   * Clear failure strikes and any active cooldown after a handset confirms a
+   * real SMS send/delivery.
+   */
+  async recordDeviceSendSuccess(
+    deviceId: string,
+    now: Date = new Date(),
+  ): Promise<void> {
+    await this.deviceModel.findByIdAndUpdate(deviceId, {
+      $set: {
+        recentSendFailures: [],
+        failureWindowResetAt: now,
+      },
+      $unset: {
+        sendCooldownUntil: '',
+        sendCooldownReason: '',
+      },
     })
   }
 
@@ -291,8 +456,25 @@ export class SmsOutboxService {
       }
     }
 
+    const cooldown = getActiveDeviceCooldown(device)
+    // A phone whose SIMs are all paused cannot deliver even when checking for
+    // busy alternatives (`ignoreLoad: true`).
+    if (cooldown.active && cooldown.reason === SMS_ERROR_ALL_SIMS_PAUSED) {
+      return {
+        eligible: false,
+        reason: `Send cooldown (${cooldown.reason})`,
+      }
+    }
+
     if (opts.ignoreLoad) {
       return { eligible: true }
+    }
+
+    if (cooldown.active) {
+      return {
+        eligible: false,
+        reason: `Send cooldown (${cooldown.reason})`,
+      }
     }
 
     const inFlight = await this.getInFlightCount(device._id.toString(), userId)
@@ -304,7 +486,11 @@ export class SmsOutboxService {
       }
     }
 
-    const failures = await this.getRecentFailureCount(device._id.toString(), userId)
+    const failures = await this.getRecentFailureCount(
+      device._id.toString(),
+      userId,
+      device,
+    )
     if (failures >= DEVICE_FAILURE_THRESHOLD) {
       return {
         eligible: false,
@@ -420,7 +606,9 @@ export class SmsOutboxService {
       if (!check.eligible) continue
 
       const inFlight = opts.ignoreLoad ? 0 : await this.getInFlightCount(id, userId)
-      const failures = opts.ignoreLoad ? 0 : await this.getRecentFailureCount(id, userId)
+      const failures = opts.ignoreLoad
+        ? 0
+        : await this.getRecentFailureCount(id, userId, device)
       const heartbeatAge = device.lastHeartbeat
         ? Date.now() - new Date(device.lastHeartbeat).getTime()
         : Number.MAX_SAFE_INTEGER
@@ -903,6 +1091,10 @@ export class SmsOutboxService {
     const maxAttempts = sms.maxAttempts || SMS_MAX_ATTEMPTS
     const attemptCount = sms.attemptCount || 0
 
+    // Persist failure strike / ALL_SIMS_PAUSED cooldown on the handset before
+    // resetting the SMS row to `pending` for failover.
+    await this.recordDeviceSendFailure(failedDeviceId, errorCode)
+
     // Record failure on this device then try others
     await this.smsModel.findByIdAndUpdate(smsId, {
       $addToSet: {
@@ -1340,17 +1532,29 @@ export class SmsOutboxService {
   }
 
   async getDeviceHealthSummary(deviceId: string, userId: any) {
+    const device = await this.deviceModel.findById(deviceId)
     const inFlight = await this.getInFlightCount(deviceId, userId)
-    const recentFailures = await this.getRecentFailureCount(deviceId, userId)
+    const recentFailures = await this.getRecentFailureCount(
+      deviceId,
+      userId,
+      device,
+    )
+    const maxInFlight = maxInFlightFor(device)
+    const cooldown = getActiveDeviceCooldown(device)
     return {
       inFlight,
       recentFailures,
-      maxInFlight: DEVICE_MAX_IN_FLIGHT,
+      maxInFlight,
       failureThreshold: DEVICE_FAILURE_THRESHOLD,
       failureCooldownMinutes: DEVICE_FAILURE_COOLDOWN_MINUTES,
+      ...(cooldown.active && {
+        cooldownUntil: cooldown.until,
+        cooldownReason: cooldown.reason,
+      }),
       isPaused:
-        inFlight >= DEVICE_MAX_IN_FLIGHT ||
-        recentFailures >= DEVICE_FAILURE_THRESHOLD,
+        inFlight >= maxInFlight ||
+        recentFailures >= DEVICE_FAILURE_THRESHOLD ||
+        cooldown.active,
     }
   }
 }

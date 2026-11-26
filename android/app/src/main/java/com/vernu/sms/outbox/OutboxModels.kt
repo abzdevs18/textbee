@@ -16,6 +16,12 @@ enum class LocalState {
     DELIVERED,
     FAILED,
 
+    /**
+     * Handed to the radio, but no SENT callback arrived within the confirmation
+     * timeout. Never auto-resent locally; late SENT/DELIVERED can still upgrade it.
+     */
+    UNKNOWN,
+
     /** Refused because the SMS outlived the server's 2-hour max age. */
     EXPIRED,
 
@@ -26,7 +32,7 @@ enum class LocalState {
     LAPSED;
 
     val isTerminal: Boolean
-        get() = this == SENT || this == DELIVERED || this == FAILED || this == EXPIRED
+        get() = this == SENT || this == DELIVERED || this == FAILED || this == UNKNOWN || this == EXPIRED
 
     companion object {
         fun parse(value: String?): LocalState =
@@ -128,13 +134,25 @@ data class SentPartPlan(
     val finalState: LocalState?
 )
 
+/** Outcome of one DELIVERED part callback (pure, unit-tested). */
+data class DeliveredPartPlan(
+    val expected: Int,
+    val deliveredMask: Long,
+    /** True once every part has a RESULT_OK delivery report. */
+    val completed: Boolean,
+    /** True when delivery promoted a SUBMITTED or UNKNOWN entry without a prior SENT completion. */
+    val promotedWithoutSent: Boolean
+)
+
 object OutboxPolicy {
     /**
      * A command handed to the radio without any SENT callback for this long
-     * may be re-sent, but only when the server explicitly retries it with a
-     * newer attempt (its dispatch lease expired).
+     * may be re-sent when the server explicitly retries it with a newer attempt.
+     * Kept well below the 10-minute server dispatch lease so a reclaimed row
+     * submitted minutes after dispatch never hits BUMP_ATTEMPT and leaks a
+     * second 10-minute lease.
      */
-    const val SUBMIT_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000L
+    const val SUBMIT_CALLBACK_TIMEOUT_MS = 5 * 60 * 1000L
 
     /**
      * Decides how a (possibly duplicate) command changes the local entry.
@@ -159,7 +177,7 @@ object OutboxPolicy {
                     else -> AcceptPlan(AcceptAction.NONE, AcceptResult.InFlight)
                 }
             }
-            LocalState.SENT, LocalState.DELIVERED -> AcceptPlan(
+            LocalState.SENT, LocalState.DELIVERED, LocalState.UNKNOWN -> AcceptPlan(
                 if (newerAttempt) AcceptAction.BUMP_ATTEMPT else AcceptAction.NONE,
                 AcceptResult.Rereport(existing)
             )
@@ -187,12 +205,21 @@ object OutboxPolicy {
         partCount: Int,
         ok: Boolean
     ): SentPartPlan? {
-        if (entry.sendSeq != sendSeq || entry.state != LocalState.SUBMITTED) return null
+        if (entry.sendSeq != sendSeq) return null
+        // Allow a late RESULT_OK confirmation to upgrade a timed-out UNKNOWN entry to SENT/DELIVERED;
+        // ignore late failures on UNKNOWN so ambiguous sends never trigger duplicate server retries.
+        val lateUpgrade = entry.state == LocalState.UNKNOWN
+        if (entry.state != LocalState.SUBMITTED && !(lateUpgrade && ok)) return null
+
         val expected = PartMath.expected(entry.partsTotal, partCount)
         val bit = PartMath.bit(partIndex)
         val sentMask = if (ok) entry.partsSentMask or bit else entry.partsSentMask
         val failedMask = if (ok) entry.partsFailedMask else entry.partsFailedMask or bit
-        val complete = PartMath.isComplete(sentMask or failedMask, expected)
+        val complete = if (lateUpgrade) {
+            PartMath.isComplete(sentMask, expected)
+        } else {
+            PartMath.isComplete(sentMask or failedMask, expected)
+        }
         val finalState = when {
             !complete -> null
             failedMask != 0L -> LocalState.FAILED
@@ -206,6 +233,35 @@ object OutboxPolicy {
             failedMask = failedMask,
             recordError = !ok && entry.errorCode == null,
             finalState = finalState
+        )
+    }
+
+    /**
+     * Folds one RESULT_OK DELIVERED part callback into the entry; null when ignored.
+     * Allows SUBMITTED and UNKNOWN entries (whose SENT callback was lost) to promote
+     * directly to DELIVERED once every part has a delivery report.
+     */
+    fun decideDeliveredPart(
+        entry: OutboxEntry,
+        sendSeq: Int,
+        partIndex: Int,
+        partCount: Int
+    ): DeliveredPartPlan? {
+        if (entry.sendSeq != sendSeq) return null
+        if (entry.state != LocalState.SENT &&
+            entry.state != LocalState.SUBMITTED &&
+            entry.state != LocalState.UNKNOWN
+        ) {
+            return null
+        }
+        val expected = PartMath.expected(entry.partsTotal, partCount)
+        val deliveredMask = entry.partsDeliveredMask or PartMath.bit(partIndex)
+        val completed = PartMath.isComplete(deliveredMask, expected)
+        return DeliveredPartPlan(
+            expected = expected,
+            deliveredMask = deliveredMask,
+            completed = completed,
+            promotedWithoutSent = completed && entry.state != LocalState.SENT
         )
     }
 
